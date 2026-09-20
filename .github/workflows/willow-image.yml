@@ -87,6 +87,7 @@ jobs:
       - name: Checksums
         run: |
           set -o pipefail
+          sudo chown -R "$(id -u):$(id -g)" images
           art=$(ls -td images/moarchy-willow-*/ | head -1)
           ( cd "$art" && sha256sum ./* > SHA256SUMS && cat SHA256SUMS && ls -l )
           echo "ART=${art%/}" >> "$GITHUB_ENV"
