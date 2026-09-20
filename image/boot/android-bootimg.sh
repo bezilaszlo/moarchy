@@ -17,7 +17,7 @@
 # image/boot/test-android-image.py reproduces that image byte-for-byte from its
 # own parts. None of it came from a wiki.
 
-# The two device-specific strings in the whole backend, which is the point -- a
+# The device-specific facts of the whole backend, which is the point -- a
 # second Qualcomm phone adds a line here and changes nothing else.
 #
 #   DTB_NAME        the device tree appended to the kernel
@@ -35,8 +35,24 @@
 # defines functions and does nothing else.
 _set_device_facts() {
   case "${DEVICE:-}" in
-    sargo) DTB_NAME=sdm670-google-sargo; ROOT_PARTLABEL=userdata ;;
-    *) die "android-bootimg: no DTB known for DEVICE=${DEVICE:-unset}" ;;
+    sargo)
+      DTB_NAME=sdm670-google-sargo; ROOT_PARTLABEL=userdata
+      KERNEL_SHARE=moarchy-sdm670; HEADER_VERSION=0; BUILTIN_CHECK=modules
+      KERNEL_LANDLOCK=yes; VBMETA=yes; AB_SLOTS=yes
+      CMDLINE_DEFAULT="root=PARTLABEL=$ROOT_PARTLABEL ro rootwait rootfstype=ext4 init=/sbin/init"
+      ;;
+    willow)
+      DTB_NAME=sm6125-xiaomi-ginkgo; ROOT_PARTLABEL=userdata
+      KERNEL_SHARE=moarchy-sm6125; HEADER_VERSION=2; BUILTIN_CHECK=config
+      KERNEL_LANDLOCK=no
+      VBMETA=no; AB_SLOTS=no
+      # The community v0.4.0 board flags verbatim; only root/firmware/init policy is ours.
+      CMDLINE_DEFAULT="console=ttyMSM0,115200n8 console=tty0 earlycon=qcom_geni,0x4a90000 \
+keep_bootcon ignore_loglevel loglevel=8 clk_ignore_unused fw_devlink.sync_state=disabled \
+androidboot.hardware=qcom root=PARTLABEL=$ROOT_PARTLABEL ro rootwait rootfstype=ext4 \
+init=/sbin/init firmware_class.path=/usr/lib/firmware/moarchy-willow panic=0"
+      ;;
+    *) die "android-bootimg: no device facts for DEVICE=${DEVICE:-unset}" ;;
   esac
 }
 
@@ -64,8 +80,8 @@ backend_kernel() {
 _set_device_facts
 say "kernel"
 
-KREL=$(cat "$ROOTDIR/usr/share/kernel/moarchy-sdm670/kernel.release" 2>/dev/null) ||
-  die "no kernel.release in the rootfs -- is linux-moarchy-sdm670 installed?"
+KREL=$(cat "$ROOTDIR/usr/share/kernel/$KERNEL_SHARE/kernel.release" 2>/dev/null) ||
+  die "no kernel.release in the rootfs -- is the $DEVICE kernel package installed?"
 info "kernel $KREL"
 
 [ -f "$ROOTDIR/boot/Image.gz" ] || die "no /boot/Image.gz in the rootfs"
@@ -93,13 +109,28 @@ cp /etc/resolv.conf "$ROOTDIR/etc/resolv.conf" ||
 #
 # modules.builtin is a list of the .ko files this kernel does NOT ship, which
 # is precisely the question being asked.
-local _builtin="$ROOTDIR/usr/lib/modules/$KREL/modules.builtin"
-[ -f "$_builtin" ] || die "no modules.builtin for $KREL -- cannot check what is built in"
-for _ko in fs/ext4/ext4.ko drivers/mmc/core/mmc_block.ko drivers/mmc/host/sdhci-msm.ko; do
-  grep -qF "$_ko" "$_builtin" ||
-    die "$_ko is a module, not built in -- this kernel cannot mount root without an initramfs (D24)"
-done
-info "ext4, mmc_block and sdhci-msm are built in; no initramfs needed"
+#
+# A pinned binary kernel ships neither modules nor that list, so BUILTIN_CHECK=config
+# reads the config extracted from that exact binary and matches its banner.
+if [ "$BUILTIN_CHECK" = modules ]; then
+  local _builtin="$ROOTDIR/usr/lib/modules/$KREL/modules.builtin"
+  [ -f "$_builtin" ] || die "no modules.builtin for $KREL -- cannot check what is built in"
+  for _ko in fs/ext4/ext4.ko drivers/mmc/core/mmc_block.ko drivers/mmc/host/sdhci-msm.ko; do
+    grep -qF "$_ko" "$_builtin" ||
+      die "$_ko is a module, not built in -- this kernel cannot mount root without an initramfs (D24)"
+  done
+  info "ext4, mmc_block and sdhci-msm are built in; no initramfs needed"
+else
+  python3 "$REPO/image/boot/check-willow-kernel.py" \
+    "$ROOTDIR/boot/Image.gz" "$ROOTDIR/usr/share/kernel/$KERNEL_SHARE/config" "$KREL" ||
+    die "the pinned kernel is not the one this image is built for, or lacks a built-in it needs"
+fi
+
+# Without Landlock pacman refuses to download at all; this turns off its sandbox, not SigLevel.
+if [ "$KERNEL_LANDLOCK" = no ]; then
+  sed -i '/^\[options\]/a DisableSandbox' "$ROOTDIR/etc/pacman.conf"
+  info "pacman.conf: DisableSandbox (this kernel has no Landlock)"
+fi
 }
 
 # ---------------------------------------------------------------------------
@@ -134,10 +165,8 @@ local OUTDIR="$OUT/$NAME"
 rm -rf "$OUTDIR"; mkdir -p "$OUTDIR"
 
 say "boot image"
-# The DTB is APPENDED to the compressed kernel, not passed separately. sargo's
-# deviceinfo sets append_dtb=true and pmOS's own image carries FDT magic inside
-# the kernel payload; a boot.img with the DTB in the `second` area instead is a
-# black screen with nothing to read.
+# HEADER_VERSION decides where the DTB goes: appended to the kernel on sargo,
+# in its own area on willow. Either choice on the other phone is a black screen.
 #
 # The cmdline. ABL does not pass this through; it BUILDS one, putting ~40
 # androidboot.* parameters of its own first, this string next, and console=null
@@ -168,18 +197,19 @@ say "boot image"
 #                    later, showing two penguins and nothing else, for a whole
 #                    night. Do not remove this line.
 #
-# There is deliberately NO console= here, and adding one does nothing: ABL
+# There is deliberately NO console= in sargo's, and adding one does nothing: ABL
 # strips it and appends console=null. Verified from a shell on the device --
 # `grep -o "console=[^ ]*" /proc/cmdline` returns console=null alone and
 # /proc/consoles lists only ttynull0. Nothing printed during boot is ever
 # visible here, which is why the assertions in this file exist at all.
-local CMDLINE=${CMDLINE:-"root=PARTLABEL=$ROOT_PARTLABEL ro rootwait rootfstype=ext4 init=/sbin/init"}
+local CMDLINE=${CMDLINE:-$CMDLINE_DEFAULT}
 info "cmdline: $CMDLINE"
 
 # No --ramdisk: this kernel mounts root itself (D24).
 python3 "$REPO/image/boot/android-image.py" bootimg \
   --kernel  "$ROOTDIR/boot/Image.gz" \
   --dtb     "$ROOTDIR/boot/dtbs/qcom/$DTB_NAME.dtb" \
+  --header-version "$HEADER_VERSION" \
   --cmdline "$CMDLINE" \
   --pagesize 4096 \
   --out "$OUTDIR/boot.img" || die "boot.img generation failed"
@@ -193,8 +223,13 @@ hdr=$(dd if="$OUTDIR/boot.img" bs=8 count=1 status=none)
 # non-zero value here means an initramfs crept back in.
 rdsz=$(od -An -tu4 -j16 -N4 "$OUTDIR/boot.img" | tr -d " ")
 [ "$rdsz" = 0 ] || die "boot.img carries a $rdsz-byte ramdisk; this backend ships none (D24)"
-info "boot.img $(stat -c%s "$OUTDIR/boot.img") bytes, no ramdisk"
+# header_version, a little-endian u32 at byte 40: where the bootloader looks for the DTB.
+hver=$(od -An -tu4 -j40 -N4 "$OUTDIR/boot.img" | tr -d " ")
+[ "$hver" = "$HEADER_VERSION" ] ||
+  die "boot.img says header v$hver, and $DEVICE needs v$HEADER_VERSION"
+info "boot.img $(stat -c%s "$OUTDIR/boot.img") bytes, header v$hver, no ramdisk"
 
+if [ "$VBMETA" = yes ]; then
 say "vbmeta"
 # An Android 12 bootloader refuses an unsigned kernel unless the vbmeta it has
 # says verification is disabled. This emits exactly what
@@ -203,6 +238,9 @@ say "vbmeta"
 python3 "$REPO/image/boot/android-image.py" vbmeta --out "$OUTDIR/vbmeta.img" ||
   die "vbmeta generation failed"
 info "vbmeta.img $(stat -c%s "$OUTDIR/vbmeta.img") bytes"
+else
+info "no vbmeta in this artifact -- $DEVICE's AVB is disabled once, before the first flash"
+fi
 
 say "rootfs image"
 # The mkfs.ext4 -d trick: populate a filesystem image from
@@ -246,8 +284,30 @@ smagic=$(dd if="$OUTDIR/rootfs.simg" bs=4 count=1 status=none | od -An -tx1 | tr
 
 say "flash script"
 # Written rather than documented, because the ORDER is load-bearing and a
-# README gets read afterwards.
-cat > "$OUTDIR/flash.sh" <<FLASH
+# README gets read afterwards. One writer per device: sargo flashes boot and
+# marks a slot, willow does neither, and the reader is holding a phone.
+_flash_script > "$OUTDIR/flash.sh"
+chmod +x "$OUTDIR/flash.sh"
+
+say "done"
+local _files="boot.img rootfs.simg"
+if [ "$VBMETA" = yes ]; then _files="boot.img vbmeta.img rootfs.simg"; fi
+( cd "$OUTDIR" && sha256sum $_files > "$NAME.sha256" )
+ls -lh "$OUTDIR" | awk 'NR>1 {print "    " $9 "  " $5}'
+info "flash with: $OUTDIR/flash.sh"
+}
+
+# ---------------------------------------------------------------------------
+_flash_script() {
+case "$DEVICE" in
+  sargo)  _flash_script_sargo ;;
+  willow) _flash_script_willow ;;
+  *) die "no flash script for DEVICE=$DEVICE" ;;
+esac
+}
+
+_flash_script_sargo() {
+cat <<FLASH
 #!/bin/bash
 # The one fact this script shares with the boot image: the partition the rootfs
 # is flashed to is the partition root=PARTLABEL= names. Interpolated here, on
@@ -256,7 +316,7 @@ cat > "$OUTDIR/flash.sh" <<FLASH
 # time and write a script that flashes from whatever directory built it.
 ROOTPART=$ROOT_PARTLABEL
 FLASH
-cat >> "$OUTDIR/flash.sh" <<'FLASH'
+cat <<'FLASH'
 # Flash moarchy to a Pixel 3a (sargo) over fastboot.
 #
 # The phone must be UNLOCKED and in fastboot: power off, then hold Volume Down
@@ -317,10 +377,64 @@ fi
 echo "==> done; rebooting"
 fastboot reboot
 FLASH
-chmod +x "$OUTDIR/flash.sh"
+}
 
-say "done"
-( cd "$OUTDIR" && sha256sum boot.img vbmeta.img rootfs.simg > "$NAME.sha256" )
-ls -lh "$OUTDIR" | awk 'NR>1 {print "    " $9 "  " $5}'
-info "flash with: $OUTDIR/flash.sh"
+# ---------------------------------------------------------------------------
+_flash_script_willow() {
+cat <<FLASH
+#!/bin/bash
+ROOTPART=$ROOT_PARTLABEL
+FLASH
+cat <<'FLASH'
+# Install moarchy on a Redmi Note 8T (willow) over fastboot. OVERWRITES userdata.
+#
+#   ./flash.sh              flash the rootfs, then boot this kernel from RAM
+#   ./flash.sh --persist    write the boot partition, after it has come up twice
+#
+# It never writes vbmeta or dtbo: those are the Phase 1.5 prerequisites, done
+# once from the workspace, and nothing here can read them back.
+#
+#     fastboot --disable-verification --disable-verity flash vbmeta <stock vbmeta.img>
+#     fastboot flash dtbo <empty dtbo.img>
+#
+# Black screen after `fastboot boot`? Boot the diagnostic image instead: same
+# kernel and DTB, a ramdisk with USB networking and a shell.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+persist=0
+case "${1:-}" in
+  "") ;;
+  --persist) persist=1 ;;
+  *) echo "!! usage: $0 [--persist]" >&2; exit 1 ;;
+esac
+
+command -v fastboot >/dev/null || { echo "!! fastboot not on PATH" >&2; exit 1; }
+fastboot devices | grep -q . || { echo "!! no fastboot device -- is the phone in the bootloader?" >&2; exit 1; }
+
+unlocked=$(fastboot getvar unlocked 2>&1 | sed -n 's/^unlocked: *//p' | head -1)
+[ "$unlocked" = yes ] || { echo "!! bootloader is locked (unlocked: ${unlocked:-unknown})" >&2; exit 1; }
+
+product=$(fastboot getvar product 2>&1 | sed -n 's/^product: *//p' | head -1)
+[ "$product" = willow ] || {
+  echo "!! this phone reports product '${product:-unknown}', not willow -- refusing" >&2; exit 1; }
+
+if [ "$persist" = 1 ]; then
+  echo "This writes the BOOT partition. Do it only after the phone has come up"
+  echo "twice on its own from a fastboot boot of this exact image."
+  read -r -p "Type PERSIST to write it: " reply
+  [ "$reply" = PERSIST ] || { echo "not confirmed; nothing written" >&2; exit 1; }
+  echo "==> boot"
+  fastboot flash boot boot.img
+  echo "==> done; the phone now boots moarchy by itself"
+  exit 0
+fi
+
+# Sparse: fastboot refuses a raw image over 4 GiB, and splits this one into chunks.
+echo "==> $ROOTPART (the rootfs -- this is the slow one, several minutes)"
+fastboot flash "$ROOTPART" rootfs.simg
+
+echo "==> booting this kernel from RAM (the boot partition is untouched)"
+fastboot boot boot.img
+FLASH
 }

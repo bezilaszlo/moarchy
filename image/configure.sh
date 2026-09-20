@@ -9,6 +9,7 @@ ROOTDIR=$1
 USER_NAME=${MOARCHY_USER:-moarchy}
 
 say() { printf '    %s\n' "$*"; }
+die() { printf '\033[31m!! %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --- the user (I8) ---------------------------------------------------------
 # DanctNIX ships `alarm` with the password 123456 and root with `root`. Neither
@@ -296,8 +297,17 @@ fi
 # So it is gated on the same debug marker as the wifi PSK, and takes the key
 # from the environment rather than defaulting to whatever is lying around in
 # ~/.ssh.
+#
+# willow has no proven display and no wifi credentials, so ssh over the USB
+# gadget is its only way in and the key is required rather than optional.
+if [ "${DEVICE:-}" = willow ] && [ -z "${MOARCHY_SSH_KEY:-}" ]; then
+  die "DEVICE=willow needs MOARCHY_SSH_KEY=<path to a public key>"
+fi
 if [ -n "${MOARCHY_SSH_KEY:-}" ]; then
   if [ ! -f "$MOARCHY_SSH_KEY" ]; then
+    if [ "${DEVICE:-}" = willow ]; then
+      die "MOARCHY_SSH_KEY=$MOARCHY_SSH_KEY does not exist"
+    fi
     say "!! MOARCHY_SSH_KEY=$MOARCHY_SSH_KEY does not exist; no key preseeded"
   elif grep -qi "PRIVATE KEY" "$MOARCHY_SSH_KEY"; then
     # Refusing rather than warning: a private key in an image is unrecoverable

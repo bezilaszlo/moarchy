@@ -10,6 +10,7 @@
 #
 #   sargo      -> android-bootimg  boot.img + rootfs.simg + vbmeta.img + a
 #                                  flash.sh, to fastboot onto a phone
+#   willow     -> android-bootimg  the same without a vbmeta of its own
 #
 # One backend today. The indirection stays because it is the seam a second
 # Qualcomm handset arrives through, and because it has been exercised by two
@@ -44,6 +45,7 @@ DEVICE=${DEVICE:-sargo}
 # is the general one).
 case "$DEVICE" in
   sargo)     BACKEND=android-bootimg ;;
+  willow)    BACKEND=android-bootimg ;;
   *) printf '\033[31m!! DEVICE=%s has no boot backend; add one to the case in %s\033[0m\n' \
        "$DEVICE" "$0" >&2; exit 1 ;;
 esac

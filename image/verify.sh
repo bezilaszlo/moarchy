@@ -35,8 +35,11 @@ chk()  { if [ "$1" = 0 ]; then ok "$2"; else no "$2"; fi; }
 # check, and the suite whose entire job is proving the checks can FAIL would
 # itself have failed for a reason that has nothing to do with the image.
 _base=$(basename "$IMG_XZ")
+# KEYED_IMAGE: willow's image carries its owner's ssh key and an enabled sshd,
+# so three checks below invert rather than relax.
 case "${DEVICE:-$_base}" in
-  sargo|moarchy-sargo-*)         DEVICE=sargo;     BACKEND=android-bootimg ;;
+  sargo|moarchy-sargo-*)         DEVICE=sargo;     BACKEND=android-bootimg; KEYED_IMAGE=0 ;;
+  willow|moarchy-willow-*)       DEVICE=willow;    BACKEND=android-bootimg; KEYED_IMAGE=1 ;;
   *) printf "  \033[31mFAIL\033[0m cannot tell what device %s is for; set DEVICE=\n" "$_base"; exit 1 ;;
 esac
 _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -410,6 +413,13 @@ for acct in moarchy root; do
     *)             no "$acct has a real password hash -- the image ships a credential" ;;
   esac
 done
+if [ "$KEYED_IMAGE" = 1 ]; then
+  [ -e "$R/etc/moarchy-debug-image" ] && ok "marked as a private image (it carries a key; never publish it)" \
+                                      || no "an image with a key in it does not say so -- no /etc/moarchy-debug-image"
+  [ -s "$R/home/moarchy/.ssh/authorized_keys" ] \
+    && ok "an ssh key is authorised ($(awk '{print $3}' "$R/home/moarchy/.ssh/authorized_keys" | head -1))" \
+    || no "no authorized_keys -- with no wifi and no proven display this image has no way in"
+else
 [ -e "$R/etc/moarchy-debug-image" ] && no "this is a DEBUG image -- do not publish" \
                                     || ok "not a debug image"
 # An authorized_keys in a PUBLISHED image would make every phone that flashes it
@@ -419,6 +429,7 @@ if [ -s "$R/home/moarchy/.ssh/authorized_keys" ]; then
   no "an ssh key is authorised in this image -- everyone who flashes it would trust it"
 else
   ok "no ssh key authorised (nobody but the owner can log in)"
+fi
 fi
 # /etc only. The mobile-data profile checked further up ships in /usr/lib and
 # is not a credential -- it names no operator, no APN and no password, and gets
@@ -430,9 +441,9 @@ np=$(ls -1 "$R"/etc/NetworkManager/system-connections/ 2>/dev/null | wc -l)
 # enabled" into a silent pass -- the direction that matters for a published image.
 if [ -e "$R/etc/systemd/system/multi-user.target.wants/sshd.service" ] ||
    [ -L "$R/etc/systemd/system/multi-user.target.wants/sshd.service" ]; then
-  no "sshd is enabled"
+  [ "$KEYED_IMAGE" = 1 ] && ok "sshd is enabled (the way in over the cable)" || no "sshd is enabled"
 else
-  ok "sshd not enabled"
+  [ "$KEYED_IMAGE" = 1 ] && no "sshd is NOT enabled -- the key is there and nothing listens" || ok "sshd not enabled"
 fi
 grep -qi '^PasswordAuthentication no' "$R/etc/ssh/sshd_config.d/10-moarchy.conf" 2>/dev/null \
   && ok "sshd password auth disabled" || no "sshd password auth not disabled"

@@ -16,17 +16,44 @@ verify_artifact() {
 sec "artifact"
 # A directory, and saying so plainly beats "cannot open file" three checks later.
 [ -d "$IMG_XZ" ] || { no "$IMG_XZ is not a directory -- an Android artifact is a directory of images (D10)"; return 1; }
-for f in boot.img vbmeta.img rootfs.simg flash.sh; do
+_want="boot.img rootfs.simg flash.sh"
+[ "$DEVICE" = sargo ] && _want="boot.img vbmeta.img rootfs.simg flash.sh"
+for f in $_want; do
   [ -e "$IMG_XZ/$f" ] && ok "$f present" || no "$f missing from the artifact"
 done
 [ -x "$IMG_XZ/flash.sh" ] && ok "flash.sh is executable" || no "flash.sh is not executable"
 
+if [ "$DEVICE" = sargo ]; then
 # The retry counter (D26). Without a --set-active the bootloader may refuse the
 # image that was just flashed, with nothing on screen to say why -- so the one
 # line that clears it is asserted rather than assumed to have survived an edit.
 grep -q -- '--set-active' "$IMG_XZ/flash.sh" \
   && ok "flash.sh resets the slot retry counter" \
   || no "flash.sh never runs --set-active; a spent retry counter refuses the new image (D26)"
+else
+# willow is non-A/B, its AVB was disabled once in the Phase 1.5 prerequisites,
+# and its boot partition stays stock until a person types PERSIST.
+[ -e "$IMG_XZ/vbmeta.img" ] && no "a vbmeta.img is in the artifact; willow's AVB is Phase 1.5's, not the build's" \
+                            || ok "no vbmeta.img (Phase 1.5 disabled verification once)"
+# Comments stripped: this script DOCUMENTS the vbmeta command it must not run.
+_cmds=$(grep -vE '^[[:space:]]*#' "$IMG_XZ/flash.sh")
+printf '%s\n' "$_cmds" | grep -q -- '--set-active' \
+  && no "flash.sh runs --set-active on a phone with no slots" \
+  || ok "flash.sh does not touch boot slots (non-A/B)"
+printf '%s\n' "$_cmds" | grep -q 'flash vbmeta' \
+  && no "flash.sh writes vbmeta -- that partition is written once, from the workspace" \
+  || ok "flash.sh never writes vbmeta"
+grep -q '^fastboot boot boot.img' "$IMG_XZ/flash.sh" \
+  && ok "flash.sh boots the kernel from RAM rather than flashing it (PLAN 3.1)" \
+  || no "flash.sh does not fastboot boot -- a first boot must be recoverable by a power cycle"
+[ "$(grep -c 'fastboot flash boot boot.img' "$IMG_XZ/flash.sh")" = 1 ] &&
+  grep -q 'Type PERSIST' "$IMG_XZ/flash.sh" \
+  && ok "the boot partition is written only behind a typed confirmation (PLAN 3.3)" \
+  || no "flash.sh writes the boot partition without the --persist confirmation"
+grep -q '\[ "\$product" = willow \]' "$IMG_XZ/flash.sh" \
+  && ok "flash.sh refuses any phone that is not willow" \
+  || no "flash.sh does not check fastboot getvar product"
+fi
 
 sec "boot image"
 # The v0 header, at the offsets image/boot/android-image.py writes and that
@@ -37,8 +64,9 @@ hdr=$(dd if="$IMG_XZ/boot.img" bs=8 count=1 status=none 2>/dev/null)
 # page_size is at byte 36, header_version at 40, both little-endian u32.
 psize=$(od -An -tu4 -j36 -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
 hver=$(od -An -tu4 -j40 -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
+_wanthver=0; [ "$DEVICE" = willow ] && _wanthver=2
 [ "$psize" = 4096 ] && ok "page size 4096" || no "page size is $psize, not 4096"
-[ "$hver" = 0 ] && ok "header version 0" || no "header version is $hver, not 0"
+[ "$hver" = "$_wanthver" ] && ok "header version $hver" || no "header version is $hver, not $_wanthver"
 
 # ramdisk_size, a little-endian u32 at byte 16. This backend ships no initramfs
 # (D24) -- the kernel mounts root itself -- and a non-zero value here means one
@@ -51,13 +79,28 @@ rdsz=$(od -An -tu4 -j16 -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
 # below needs it and so does the DTB extraction further down.
 ksize=$(od -An -tu4 -j8 -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
 
-# The whole file should then be the header page plus the padded kernel, with
-# nothing after it. Catches a stray page or a truncated kernel, both of which
-# boot into silence.
-want=$(( 4096 + (ksize + 4095) / 4096 * 4096 ))
+# The whole file should then be the header page plus the padded kernel and,
+# on v2, the padded DTB. Catches a stray page or a truncated payload, both of
+# which boot into silence.
+# dtb_size is a little-endian u32 at byte 1648, after the v1 fields.
+dtbsz=0
+[ "$hver" = 2 ] && dtbsz=$(od -An -tu4 -j1648 -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
+want=$(( 4096 + (ksize + 4095) / 4096 * 4096 + (dtbsz + 4095) / 4096 * 4096 ))
 have=$(stat -c%s "$IMG_XZ/boot.img")
-[ "$have" = "$want" ] && ok "boot.img is header + kernel, $have bytes" \
-                      || no "boot.img is $have bytes, not the $want a header plus a padded kernel makes"
+[ "$have" = "$want" ] && ok "boot.img is header + kernel + $dtbsz bytes of dtb, $have bytes" \
+                      || no "boot.img is $have bytes, not the $want its header describes"
+
+if [ "$DEVICE" = willow ]; then
+# Measured off the v0.4.0 image this phone's bootloader accepted; a wrong load
+# address is a black screen with nothing to read.
+for _f in 12:32768:kernel_addr 20:16777216:ramdisk_addr 32:256:tags_addr; do
+  _off=${_f%%:*}; _rest=${_f#*:}; _want=${_rest%%:*}; _name=${_rest#*:}
+  _got=$(od -An -tu4 -j"$_off" -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
+  [ "$_got" = "$_want" ] && ok "$_name $_want" || no "$_name is $_got, not the measured $_want"
+done
+_got=$(od -An -tu8 -j1652 -N8 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
+[ "$_got" = 32505856 ] && ok "dtb_addr 32505856" || no "dtb_addr is $_got, not the measured 32505856"
+fi
 
 sec "boot cmdline"
 # Read back out of the artifact rather than trusted from the script that wrote
@@ -101,6 +144,20 @@ flashpart=$(sed -n 's/^ROOTPART=//p' "$IMG_XZ/flash.sh" | head -1)
   && ok "boot cmdline and flash.sh agree on '$cmdpart'" \
   || no "cmdline boots from '${cmdpart:-?}' but flash.sh writes the rootfs to '${flashpart:-?}'"
 
+if [ "$DEVICE" = willow ]; then
+  # Without this the kernel finds linux-firmware's Adreno microcode first and
+  # the phone runs firmware that was never signed for it.
+  case " $cmdline " in
+    *" firmware_class.path=/usr/lib/firmware/moarchy-willow "*)
+      ok "firmware_class.path points at the pinned willow firmware" ;;
+    *) no "no firmware_class.path -- the pinned zap, sqe and modem blobs are not what loads" ;;
+  esac
+  case " $cmdline " in
+    *" panic=0 "*) ok "panic=0 (a panic halts instead of rebooting into whatever is on boot)" ;;
+    *) no "no panic=0 -- a panic would hand the phone back to the flashed boot partition" ;;
+  esac
+fi
+
 # The kernel payload must carry an appended DTB: sargo's deviceinfo sets
 # append_dtb=true, and a boot image without one is a black screen with nothing
 # to read. FDT magic is d00dfeed, big-endian, and it should appear AFTER the
@@ -108,12 +165,22 @@ flashpart=$(sed -n 's/^ROOTPART=//p' "$IMG_XZ/flash.sh" | head -1)
 dd if="$IMG_XZ/boot.img" of="$WORK/kernel.bin" bs=1 skip=4096 count="${ksize:-0}" status=none 2>/dev/null
 kmagic=$(dd if="$WORK/kernel.bin" bs=2 count=1 status=none 2>/dev/null | od -An -tx1 | tr -d ' \n')
 [ "$kmagic" = "1f8b" ] && ok "kernel payload is gzip (Image.gz)" || no "kernel payload is not gzip (magic $kmagic)"
-if od -An -tx1 -v "$WORK/kernel.bin" 2>/dev/null | tr -d ' \n' | grep -q 'd00dfeed'; then
+if [ "$hver" = 2 ]; then
+  # v2 carries exactly one device tree, in its own area.
+  _dtboff=$(( 4096 + (ksize + 4095) / 4096 * 4096 ))
+  dmagic=$(dd if="$IMG_XZ/boot.img" bs=1 skip="$_dtboff" count=4 status=none 2>/dev/null | od -An -tx1 | tr -d ' \n')
+  [ "$dmagic" = "d00dfeed" ] && ok "the dtb area starts with FDT magic" \
+                             || no "the dtb area does not start with FDT magic (got $dmagic)"
+  od -An -tx1 -v "$WORK/kernel.bin" 2>/dev/null | tr -d ' \n' | grep -q 'd00dfeed' \
+    && no "a device tree is ALSO appended to the kernel; v2 carries exactly one" \
+    || ok "no second device tree inside the kernel payload"
+elif od -An -tx1 -v "$WORK/kernel.bin" 2>/dev/null | tr -d ' \n' | grep -q 'd00dfeed'; then
   ok "a device tree is appended to the kernel"
 else
   no "no FDT magic in the kernel payload -- the DTB was not appended"
 fi
 
+if [ "$DEVICE" = sargo ]; then
 sec "verified boot"
 # Flag 2 is AVB_VBMETA_IMAGE_FLAGS_VERIFICATION_DISABLED. Without it an
 # Android 12 bootloader refuses an unsigned kernel, and the error it gives does
@@ -124,6 +191,7 @@ vmagic=$(dd if="$IMG_XZ/vbmeta.img" bs=4 count=1 status=none 2>/dev/null)
 vflags=$(od -An -tu4 --endian=big -j120 -N4 "$IMG_XZ/vbmeta.img" 2>/dev/null | tr -d ' ')
 [ "$vflags" = 2 ] && ok "vbmeta flags = 2 (verification disabled)" \
                   || no "vbmeta flags = ${vflags:-?}, not 2 -- the bootloader will refuse this kernel"
+fi
 
 sec "rootfs"
 # Sparse, and checked for it. A raw image here would flash fine while it is
@@ -144,6 +212,13 @@ printf '  rootfs %s sparse -> %s raw\n' \
 
 # What has to be true of THIS device's rootfs (the optional hook in verify.sh).
 verify_rootfs() {
+case "$DEVICE" in
+  sargo)  _verify_rootfs_sargo ;;
+  willow) _verify_rootfs_willow ;;
+esac
+}
+
+_verify_rootfs_sargo() {
 sec "the boot slot is marked successful (D26)"
 # The check that is invisible in every other section, because an image missing
 # this is otherwise perfect. An A/B bootloader counts a slot down on every
@@ -366,6 +441,90 @@ if [ -s "$R/usr/share/q6voiced/q6voiced.conf" ]; then
 else
   no "no /usr/share/q6voiced/q6voiced.conf -- q6voiced's unit is condition-skipped silently"
 fi
+}
+
+_verify_rootfs_willow() {
+sec "the pinned kernel"
+# Nobody here can rebuild this binary, so the pins in manifest.toml are the only check there is.
+_krel=$(manifest_get device.willow kernel-release) || _krel=
+_got=$(cat "$R/usr/share/kernel/moarchy-sm6125/kernel.release" 2>/dev/null)
+[ -n "$_krel" ] && [ "$_got" = "$_krel" ] \
+  && ok "kernel.release is the pinned $_got" \
+  || no "kernel.release is '${_got:-missing}', the manifest pins '${_krel:-unreadable}'"
+for _p in kernel-sha256:/boot/Image.gz dtb-sha256:/boot/dtbs/qcom/sm6125-xiaomi-ginkgo.dtb; do
+  _key=${_p%%:*}; _file=${_p#*:}
+  _want=$(manifest_get device.willow "$_key") || _want=
+  _have=$(sha256sum "$R$_file" 2>/dev/null | cut -d' ' -f1)
+  [ -n "$_want" ] && [ "$_have" = "$_want" ] \
+    && ok "$_file is the pinned payload" \
+    || no "$_file does not match $_key -- the kernel or DTB was repinned"
+done
+# No modules ship with this binary, so a .ko in the image came from somewhere else.
+if find "$R/usr/lib/modules" -name '*.ko*' 2>/dev/null | grep -q .; then
+  no "there are kernel modules in the image; none match this prebuilt kernel"
+else
+  ok "no kernel modules (this binary ships none)"
+fi
+
+sec "the Wi-Fi chain (D27), willow's own firmware"
+# firmware_class.path in the cmdline is what makes this directory win over
+# linux-firmware's copies of the same names.
+_fw="$R/usr/lib/firmware/moarchy-willow"
+for _f in qcom/a630_sqe.fw qcom/sm6125/xiaomi/ginkgo/a610_zap.mdt \
+          qcom/sm6125/xiaomi/ginkgo/modem.mdt ath10k/WCN3990/hw1.0/wlanmdsp.mbn \
+          ath10k/WCN3990/hw1.0/board.bin ath10k/WCN3990/hw1.0/firmware-5.bin; do
+  [ -s "$_fw/$_f" ] && ok "firmware $_f" || no "no $_f in /usr/lib/firmware/moarchy-willow"
+done
+for _b in rmtfs tqftpserv; do
+  [ -x "$R/usr/bin/$_b" ] && ok "$_b is installed" \
+    || no "no /usr/bin/$_b -- moarchy-qcom-modem is missing and the WLAN firmware never runs"
+done
+unit system/multi-user.target rmtfs.service
+unit system/multi-user.target tqftpserv.service
+unit system/multi-user.target moarchy-willow-mpss.service
+grep -q '^ConditionPathExists=/dev/qcom_rmtfs_mem1' \
+  "$R/usr/lib/systemd/system/rmtfs.service" 2>/dev/null \
+  && ok "rmtfs.service waits on /dev/qcom_rmtfs_mem1 (willow's DT says client-id 1 too)" \
+  || no "rmtfs.service's ConditionPathExists is not /dev/qcom_rmtfs_mem1 -- it would never start"
+
+sec "the way in over the cable"
+[ -x "$R/usr/bin/moarchy-willow-usbnet" ] && ok "moarchy-willow-usbnet is installed" \
+                                          || no "no moarchy-willow-usbnet -- nothing raises the gadget"
+unit system/multi-user.target moarchy-willow-usbnet.service
+grep -q 'functions/ecm.usb0' "$R/usr/bin/moarchy-willow-usbnet" 2>/dev/null \
+  && ok "the gadget is CDC-ECM (D19), not RNDIS" \
+  || no "the gadget function is not ecm.usb0 (D19)"
+grep -q '172\.16\.42\.1/24' "$R/usr/bin/moarchy-willow-usbnet" 2>/dev/null \
+  && ok "usb0 comes up at 172.16.42.1/24" || no "the gadget script sets no address"
+grep -q 'interface-name:usb0' \
+  "$R/usr/lib/NetworkManager/conf.d/90-moarchy-willow-usb0.conf" 2>/dev/null \
+  && ok "NetworkManager leaves usb0 alone" \
+  || no "NetworkManager would manage usb0 and drop the static address"
+
+sec "swap, and the zram that cannot work here"
+unit system/multi-user.target moarchy-willow-swapfile.service
+[ -x "$R/usr/bin/moarchy-willow-swapfile" ] && ok "moarchy-willow-swapfile is installed" \
+                                            || no "no moarchy-willow-swapfile"
+if [ -e "$R/etc/systemd/system/multi-user.target.wants/zramswap.service" ] ||
+   [ -L "$R/usr/lib/systemd/system/multi-user.target.wants/zramswap.service" ]; then
+  no "zramswap is enabled; this kernel has no ZRAM and it would fail every boot"
+else
+  ok "zramswap is not enabled (no CONFIG_ZRAM in this kernel)"
+fi
+
+sec "pacman on a kernel with no Landlock"
+grep -q '^DisableSandbox' "$R/etc/pacman.conf" \
+  && ok "pacman.conf disables the download sandbox" \
+  || no "no DisableSandbox -- every pacman -S on the phone stops at a Landlock error"
+grep -q '^SigLevel = Never' "$R/etc/pacman.conf" \
+  && no "a repo in pacman.conf is SigLevel = Never -- signatures were traded away with the sandbox" \
+  || ok "no repo dropped its signature check"
+
+sec "what this phone does not have"
+[ -x "$R/usr/bin/qbootctl" ] && no "qbootctl is installed on a non-A/B phone" \
+                             || ok "no qbootctl (willow has no slots)"
+[ -x "$R/usr/bin/q6voiced" ] && no "q6voiced is installed; this kernel has no Qualcomm audio" \
+                             || ok "no q6voiced (no SND_SOC_QCOM in this kernel)"
 }
 
 # The rootfs growing to fill its partition.

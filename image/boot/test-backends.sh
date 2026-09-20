@@ -37,7 +37,8 @@ for backend in image/boot/*.sh; do
   # (1) Calls without definitions. Both are matched at the start of a line,
   # which is how every helper in these files is written and called.
   defs=$(grep -oE '^_[a-z_]+\(\)' "$backend" | tr -d '()' | sort -u)
-  calls=$(grep -oE '^_[a-z_]+$' "$backend" | sort -u)
+  # No trailing anchor: a helper is also called with its output redirected.
+  calls=$(grep -oE '^_[a-z_]+' "$backend" | sort -u)
   missing=$(comm -23 <(echo "$calls") <(echo "$defs"))
   if [ -n "$missing" ]; then
     no "calls a function it does not define: $(echo "$missing" | tr '\n' ' ')"
