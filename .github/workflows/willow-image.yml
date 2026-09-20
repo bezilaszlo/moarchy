@@ -19,7 +19,7 @@ defaults:
 env:
   WS: ${{ github.workspace }}/../ws
   DEVICE: willow
-  LOG: ${{ runner.temp }}/build.log
+  LOG: ${{ github.workspace }}/.cache/build.log
   PKGBUILD_ONLY: >-
     moarchy moarchy-meta moarchy-keyring omarchy-config bootmac moarchy-waydroid
     linux-moarchy-sm6125 firmware-moarchy-willow moarchy-device-willow
@@ -33,6 +33,7 @@ jobs:
       - name: Stage pinned inputs
         run: |
           set -o pipefail
+          mkdir -p .cache
           scripts/ci-willow-inputs.sh "$WS"
           bash scripts/stage-willow.sh "$WS"
           df -h /
@@ -104,5 +105,5 @@ jobs:
         if: always()
         with:
           name: willow-build-log
-          path: ${{ runner.temp }}/build.log
+          path: .cache/build.log
           retention-days: 7
