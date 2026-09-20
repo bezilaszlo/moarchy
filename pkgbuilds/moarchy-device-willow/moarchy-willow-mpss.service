@@ -1,7 +1,7 @@
 [Unit]
 Description=Start willow MPSS for WCN3990 Wi-Fi
 After=rmtfs.service tqftpserv.service
-Requires=rmtfs.service tqftpserv.service
+Wants=rmtfs.service tqftpserv.service
 Before=network.target
 
 [Service]

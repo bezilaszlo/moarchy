@@ -3,10 +3,18 @@
 set -eu
 
 file=/var/swapfile
-size=2G
+size_mib=2048
+# Headroom, because a full rootfs is not a phone with less swap: it is logind
+# and every StateDirectory= unit failing with ENOSPC. Measured in QEMU.
+keep_mib=1024
 
 if [ ! -f "$file" ]; then
-  mkswap -U clear --size "$size" --file "$file" >/dev/null
+  free_mib=$(df -Pm /var | awk 'NR==2 {print $4}')
+  if [ "${free_mib:-0}" -lt $(( size_mib + keep_mib )) ]; then
+    echo "only ${free_mib}M free on /var; no swapfile (did the rootfs grow?)" >&2
+    exit 0
+  fi
+  mkswap -U clear --size "${size_mib}M" --file "$file" >/dev/null || { rm -f "$file"; exit 1; }
 fi
 if ! grep -q "^$file " /proc/swaps; then
   swapon "$file"
