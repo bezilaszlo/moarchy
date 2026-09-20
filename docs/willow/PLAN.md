@@ -251,6 +251,9 @@ boot image repacked with it (2.1); SQE is not TZ-signed, only zap is (0.5b).
     mounts root) when `init_eaccess(ramdisk_execute_command)` fails. Residual risk: an initramfs
     that failed to unpack would fall through to mounting userdata rw; the ramdisk is hash-pinned
     and QEMU-tested. The pinned DTB is not modified.
+    Build: `WORK=<dir with community-boot/ and stock-rom/> image/diag-willow/build.sh` (inputs
+    hash-checked against `inputs.sha256`, busybox fetched from docker). Run: `run-diag.sh` after
+    unlock; it prints (never runs) the sudo/nmcli commands if the host does not pick up DHCP.
     Hard hang: hold Power ~10 s (hardware reset) — returns to MIUI, nothing was flashed.
     Tested in QEMU (`-M virt`, same Image + ramdisk): init runs, report renders, telnetd starts.
     NOT testable before unlock: panel, GPU firmware load, USB gadget, eMMC detection.

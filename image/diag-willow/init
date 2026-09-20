@@ -1,12 +1,6 @@
 #!/bin/sh
-# moarchy-willow diagnostic init. Contract: mounts and writes no eMMC partition
-# data. Only virtual filesystems are mounted, and every mmcblk node is flipped
-# read-only at the block layer (re-applied every report cycle).
-# Not claimed: "touches nothing". The kernel's eMMC init sets EXT_CSD device
-# registers (bus width, timing, cache) exactly as Android does on every boot.
-# The DTB /chosen bootargs say `root=... rw init=/init`; that is inert because
-# an initramfs /init exists, so prepare_namespace() is never reached
-# (v7.0 init/main.c kernel_init_freeable: init_eaccess(ramdisk_execute_command)).
+# Contract: mounts and writes no partition data (kernel eMMC init still sets EXT_CSD, as Android does).
+# DTB bootargs `root=... rw` are inert: /init exists, so prepare_namespace() never runs (PLAN 0.5b).
 export PATH=/bin:/sbin
 /bin/busybox --install -s /bin
 
@@ -25,10 +19,7 @@ mount -t pstore pstore /sys/fs/pstore 2>/dev/null
 
 say() { echo "$*"; echo "diag: $*" > /dev/kmsg; }
 
-# Storage can appear a moment after init starts. Wait for the partition table
-# to settle (want 87; give up after 15 s), then lock every block node. The
-# partition scan can still be running when the disk node shows up, so this is
-# re-applied on every report cycle below.
+# Partition scan may still be running here; lock_ro is re-applied every report cycle.
 lock_ro() {
   for b in /dev/mmcblk*; do
     [ -b "$b" ] && blockdev --setro "$b" 2>/dev/null
@@ -45,8 +36,6 @@ while [ $i -lt 75 ]; do
 done
 lock_ro
 
-# USB: force device role, then an RNDIS gadget (the function the community
-# system is known to work with) + DHCP so the host needs no configuration.
 for r in /sys/class/usb_role/*/role; do [ -e "$r" ] && echo device > "$r" 2>/dev/null; done
 G=/sys/kernel/config/usb_gadget/diag
 mkdir -p $G && cd $G && {
@@ -63,8 +52,7 @@ mkdir -p $G && cd $G && {
   [ -n "$UDC" ] && echo "$UDC" > UDC
 }
 cd /
-# ECM probe (moarchy's real image uses CDC-ECM; only RNDIS is proven on this
-# UDC). Throwaway gadget, function never linked into a config, never bound.
+# Probe only: function is never linked into a config or bound to the UDC.
 P=/sys/kernel/config/usb_gadget/ecmprobe
 if mkdir $P 2>/dev/null && mkdir $P/functions/ecm.probe 2>/dev/null; then
   echo "created (never bound)" > /run/ecm-probe
@@ -80,9 +68,6 @@ telnetd -l /bin/sh -p 23
 mkdir -p /run/www
 httpd -p 80 -h /run/www 2>/dev/null
 
-# Prove the touch firmware really loaded: the NVT driver logs an explicit
-# success line, or one of several failure lines. The input device name alone
-# says nothing (the driver registers it before/without a successful download).
 touch_fw() {
   nvt=$(dmesg | grep -E 'NVT|nvt' | grep -iE 'firmware|fw' )
   if echo "$nvt" | grep -q 'Update firmware success'; then

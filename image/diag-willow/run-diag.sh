@@ -1,10 +1,4 @@
 #!/bin/bash
-# Unlock-day gate (PLAN.md 1.3). Boots the diagnostic image ONCE from RAM.
-# `fastboot boot` writes no partition, and the image's init mounts no eMMC
-# filesystem and sets every mmcblk node read-only. (The kernel's eMMC init does
-# set EXT_CSD device registers, exactly as Android does on every boot.)
-# Build the image first: image/diag-willow/build.sh
-# No sudo is ever run here; commands that need it are printed for you.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 img=${DIAG_IMG:-$here/../../images/diag-willow/boot-diag-willow.img}

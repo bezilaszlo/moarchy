@@ -1,11 +1,4 @@
 #!/bin/bash
-# Rebuild the diagnostic boot image (docs/willow/PLAN.md 0.5b) from pinned inputs.
-# Output: images/diag-willow/boot-diag-willow.img (ignored by Git) and a fresh
-# SHA256SUMS next to this script. No binaries are committed; this script
-# fetches busybox from docker and refuses any input whose hash differs.
-#
-# Usage: WORK=~/Work/moarchy-willow image/diag-willow/build.sh
-#   WORK must contain community-boot/boot.img and stock-rom/fw-willow/.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
@@ -23,7 +16,6 @@ check() { [ "$(sha "$1")" = "$(want "$2")" ] || { echo "input hash mismatch: $2"
 check "$BOOT" community-boot/boot.img
 for f in a610_zap.b00 a610_zap.b01 a610_zap.b02 a610_zap.mdt a630_sqe.fw; do check "$FW/$f" stock-rom/fw-willow/$f; done
 
-# busybox: static aarch64 musl, from docker (linux/arm64), pinned by hash
 mkdir -p "$stage/root/bin" "$stage/root/etc" "$stage/root"/{dev,proc,sys,tmp,run,sbin,var/lib/misc}
 cid=$(docker create --platform linux/arm64 busybox:musl)
 docker cp "$cid":/bin/busybox "$stage/root/bin/busybox"; docker rm "$cid" >/dev/null
@@ -36,7 +28,6 @@ mkdir -p "$fwd/sm6125/xiaomi/ginkgo"
 install -m 644 "$FW"/a610_zap.{mdt,b00,b01,b02} "$fwd/sm6125/xiaomi/ginkgo/"
 install -m 644 "$FW/a630_sqe.fw" "$fwd/a630_sqe.fw"
 
-# Deterministic ramdisk: fixed mtime/owner, sorted names, no gzip timestamp.
 mkdir -p "$out"
 find "$stage/root" -exec touch -h -d @0 {} +
 (cd "$stage/root" && find . | LC_ALL=C sort | cpio -o -H newc -R 0:0 --quiet --reproducible) | gzip -n -9 > "$stage/ramdisk.cpio.gz"
@@ -63,7 +54,6 @@ cmdline = (b"console=ttyMSM0,115200n8 console=tty0 keep_bootcon ignore_loglevel 
 h = bytearray(d[:PAGE])
 struct.pack_into('<I', h, 16, len(rd))
 h[64:64 + 512] = cmdline.ljust(512, b'\0')
-# AOSP id: sha1 over kernel, ramdisk, second, recovery_dtbo, dtb, each followed by its LE size
 sha = hashlib.sha1()
 for blob in (kern, rd, b'', b'', dtb):
     sha.update(blob); sha.update(struct.pack('<I', len(blob)))
@@ -71,7 +61,6 @@ h[576:608] = sha.digest().ljust(32, b'\0')
 pad = lambda b: b + b'\0' * (up(len(b)) - len(b))
 img = bytes(h) + pad(kern) + pad(rd) + pad(dtb)
 open(dst, 'wb').write(img)
-# invariants: everything but ramdisk size, cmdline, id is byte-identical to v0.4.0
 o = bytes(d[:PAGE]); n = bytes(h)
 diff = [i for i in range(PAGE) if o[i] != n[i]]
 assert all(16 <= i < 20 or 64 <= i < 576 or 576 <= i < 608 for i in diff), diff
