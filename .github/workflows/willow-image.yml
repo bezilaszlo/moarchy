@@ -1,0 +1,74 @@
+name: willow-image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [willow-port, willow-ci]
+
+concurrency:
+  group: willow-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  WS: ${{ github.workspace }}/../ws
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Disk before
+        run: df -h /
+      - name: Stage pinned inputs
+        run: |
+          scripts/ci-willow-inputs.sh "$WS"
+          scripts/stage-willow.sh "$WS"
+          df -h /
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: packages
+          key: packages-${{ hashFiles('manifest.toml', 'docker/**', 'pkgbuilds/**', 'bin/**', 'default/**', 'config/**', 'scripts/manifest.sh', 'scripts/provision.sh') }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/pacman
+          key: pacman-${{ hashFiles('manifest.toml', 'image/Dockerfile') }}
+          restore-keys: pacman-
+      - name: Build packages
+        run: |
+          ./scripts/provision.sh build 2>&1 | tee "$RUNNER_TEMP/build.log"
+          df -h /
+      - name: Build image
+        env:
+          KEY: ${{ vars.MOARCHY_SSH_KEY }}
+        run: |
+          test -n "$KEY"
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/key.pub"
+          DEVICE=willow MOARCHY_SSH_KEY="$RUNNER_TEMP/key.pub" ./scripts/build-image.sh 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          df -h /
+      - name: Verify
+        run: |
+          python3 image/boot/test-android-image.py
+          python3 image/boot/test-willow-boot.py
+          ./image/boot/test-backends.sh
+          art=$(ls -d images/moarchy-willow-*/ | head -1)
+          ./scripts/verify-image.sh "${art%/}" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+      - name: Diagnostic image reproduces
+        run: |
+          WORK="$WS" image/diag-willow/build.sh
+          git diff --exit-code image/diag-willow/SHA256SUMS
+      - name: Collect
+        run: |
+          art=$(ls -d images/moarchy-willow-*/ | head -1)
+          mkdir -p out
+          cp "${art}"{boot.img,rootfs.simg,flash.sh} images/diag-willow/boot-diag-willow.img "$RUNNER_TEMP/build.log" out/
+          (cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS && ls -l)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: willow-image
+          path: out/
+          retention-days: 7
+          compression-level: 0
