@@ -26,7 +26,7 @@ jobs:
       - name: Stage pinned inputs
         run: |
           scripts/ci-willow-inputs.sh "$WS"
-          scripts/stage-willow.sh "$WS"
+          bash scripts/stage-willow.sh "$WS"
           df -h /
       - name: Diagnostic image reproduces
         run: |
