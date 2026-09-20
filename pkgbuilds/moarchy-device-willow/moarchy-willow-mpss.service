@@ -1,0 +1,14 @@
+[Unit]
+Description=Start willow MPSS for WCN3990 Wi-Fi
+After=rmtfs.service tqftpserv.service
+Requires=rmtfs.service tqftpserv.service
+Before=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/moarchy-willow-mpss
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

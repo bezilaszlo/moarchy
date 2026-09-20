@@ -1,0 +1,13 @@
+#!/bin/sh
+# 4 GB of RAM and no ZRAM in this kernel, so swap is a file on userdata.
+set -eu
+
+file=/var/swapfile
+size=2G
+
+if [ ! -f "$file" ]; then
+  mkswap -U clear --size "$size" --file "$file" >/dev/null
+fi
+if ! grep -q "^$file " /proc/swaps; then
+  swapon "$file"
+fi

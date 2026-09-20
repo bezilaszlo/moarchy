@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+# PAS remoteproc is not the MSS-PIL device that rmtfs -s knows how to start.
+for attempt in $(seq 1 60); do
+  for proc in /sys/class/remoteproc/remoteproc*; do
+    [ -r "$proc/firmware" ] || continue
+    [ "$(cat "$proc/firmware")" = qcom/sm6125/xiaomi/ginkgo/modem.mdt ] || continue
+    state=$(cat "$proc/state")
+    case "$state" in
+      running) exit 0 ;;
+      offline) printf 'start\n' > "$proc/state"; exit 0 ;;
+      *) echo "MPSS is $state; refusing to restart a failing remoteproc" >&2; exit 1 ;;
+    esac
+  done
+  sleep 1
+done
+echo 'MPSS remoteproc did not appear' >&2
+exit 1

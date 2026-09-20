@@ -24,3 +24,6 @@ repo/dist/
 # from. Untracked and ignored on purpose: it describes a local build directory,
 # and scripts/build-image.sh refuses a tree with untracked files in it.
 packages/.build-manifest
+
+# Staged willow inputs: vendor blobs, kept out of Git and off any release.
+sources/willow/

@@ -1,0 +1,45 @@
+#!/bin/sh
+# CDC-ECM gadget at 172.16.42.1/24, the only way in before wifi is configured.
+set -eu
+
+G=/sys/kernel/config/usb_gadget/moarchy
+
+if [ ! -d /sys/kernel/config/usb_gadget ]; then
+  mount -t configfs none /sys/kernel/config 2>/dev/null || true
+fi
+[ -d /sys/kernel/config/usb_gadget ] || { echo "configfs has no usb_gadget" >&2; exit 1; }
+if [ -d "$G" ]; then
+  exit 0
+fi
+
+for role in /sys/class/usb_role/*/role; do
+  if [ -e "$role" ]; then echo device > "$role" 2>/dev/null || true; fi
+done
+
+mkdir -p "$G"
+cd "$G"
+echo 0x1d6b > idVendor
+echo 0x0104 > idProduct
+mkdir -p strings/0x409 configs/c.1/strings/0x409 functions/ecm.usb0
+echo moarchy > strings/0x409/manufacturer
+echo willow > strings/0x409/product
+echo moarchy-willow > strings/0x409/serialnumber
+echo ECM > configs/c.1/strings/0x409/configuration
+echo 02:00:00:00:42:01 > functions/ecm.usb0/host_addr
+echo 02:00:00:00:42:02 > functions/ecm.usb0/dev_addr
+ln -s functions/ecm.usb0 configs/c.1/
+
+udc=
+n=0
+while [ -z "$udc" ] && [ "$n" -lt 60 ]; do
+  udc=$(ls /sys/class/udc 2>/dev/null | head -1)
+  if [ -z "$udc" ]; then sleep 0.5; n=$((n + 1)); fi
+done
+[ -n "$udc" ] || { echo "no UDC: this kernel has no usb device controller" >&2; exit 1; }
+echo "$udc" > UDC
+
+n=0
+while [ ! -e /sys/class/net/usb0 ] && [ "$n" -lt 40 ]; do sleep 0.25; n=$((n + 1)); done
+[ -e /sys/class/net/usb0 ] || { echo "the gadget bound but usb0 never appeared" >&2; exit 1; }
+ip address add 172.16.42.1/24 dev usb0
+ip link set usb0 up

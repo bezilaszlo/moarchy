@@ -1,0 +1,12 @@
+[Unit]
+Description=USB network gadget (172.16.42.1)
+After=sys-kernel-config.mount
+Before=sshd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/moarchy-willow-usbnet
+
+[Install]
+WantedBy=multi-user.target

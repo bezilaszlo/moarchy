@@ -1,0 +1,11 @@
+[Unit]
+Description=Swapfile on userdata
+After=moarchy-grow-rootfs.service local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/moarchy-willow-swapfile
+
+[Install]
+WantedBy=multi-user.target

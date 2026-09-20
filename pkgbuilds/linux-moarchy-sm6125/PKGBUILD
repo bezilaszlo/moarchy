@@ -1,0 +1,33 @@
+. "$startdir/../../scripts/manifest.sh"
+pkgname=linux-moarchy-sm6125
+pkgver=$(manifest_get device.willow kernel-package-version) || return 1
+pkgrel=1
+pkgdesc='Pinned community SM6125 kernel for experimental willow bring-up'
+arch=('aarch64')
+url=$(manifest_get device.willow kernel-url) || return 1
+license=('GPL-2.0-only')
+depends=('coreutils' 'kmod')
+options=('!strip' '!debug')
+_release=$(manifest_get device.willow kernel-release) || return 1
+_inputs="$startdir/../../sources/willow"
+source=("file://$_inputs/Image.gz" "file://$_inputs/sm6125-xiaomi-ginkgo.dtb" "file://$_inputs/config")
+noextract=('Image.gz')
+sha256sums=("$(manifest_get device.willow kernel-sha256)"
+            "$(manifest_get device.willow dtb-sha256)"
+            "$(manifest_get device.willow config-sha256)")
+
+# In build(), not check(): docker/build-packages.sh builds in-repo recipes with --nocheck.
+build() {
+  python3 "$startdir/../../image/boot/check-willow-kernel.py" \
+    "$srcdir/Image.gz" "$srcdir/config" "$_release"
+}
+
+package() {
+  install -Dm644 "$srcdir/Image.gz" "$pkgdir/boot/Image.gz"
+  install -Dm644 "$srcdir/sm6125-xiaomi-ginkgo.dtb" \
+    "$pkgdir/boot/dtbs/qcom/sm6125-xiaomi-ginkgo.dtb"
+  install -Dm644 "$srcdir/config" \
+    "$pkgdir/usr/share/kernel/moarchy-sm6125/config"
+  # No modules.builtin is fabricated: this binary ships no modules at all.
+  printf '%s\n' "$_release" > "$pkgdir/usr/share/kernel/moarchy-sm6125/kernel.release"
+}

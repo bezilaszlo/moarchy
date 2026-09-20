@@ -40,6 +40,23 @@ version = "v4.0.4"
 [moarchy]
 version = "0.5.0"
 
+# Experimental willow port. Inputs are staged locally, not fetched at HEAD.
+[device.willow]
+kernel-url = "https://github.com/Huabin1010/ginkgo-mainline-linux"
+kernel-ref = "v0.4.0"
+kernel-package-version = "7.0.0.v0.4.0"
+kernel-release = "7.0.0-00002-gcd7710569d75-dirty"
+boot-sha256 = "9d933553c7eefd2e9e850c08b972de673396979175ce326bac2c3a206d66504a"
+kernel-sha256 = "ad36bdf662ba26cba8c8ceef11f43a58a4f1adc4885362df5bcee49dfff571dc"
+dtb-sha256 = "ec92e66eb6e8959d75b6bc77b79af18d419ea2912be629ebcad76354d8d7bcb5"
+config-sha256 = "63b1a16478f55faca0201cc760b4981a6d2d1dfdd12ca07d02fa4a59cee1cfbc"
+firmware-version = "12.5.5"
+firmware-rom = "willow_eea V12.5.5.0.RCXEUXM"
+firmware-sha256 = "b789a580298d826665dec57bb6e85fe980625942ed30b0fab5c0d150774d220f"
+non-hlos-sha256 = "45e369691c3073ef9b497661e2662fdbbda7dc622327204c7032e4687044798d"
+wlan-descriptor-ref = "c070fbf7ef08f15647063953e30404eb1a0ee1fd"
+wlan-descriptor-sha256 = "fef6539e0127579536bc977be57a90d018b83f2931fedc3a8870fbe38d6c4127"
+
 # ---------------------------------------------------------------------------
 # Our own components. Separate repos, consumed as built packages and never as
 # submodules (docs/structure.md B1); this is the pin that buys what a submodule

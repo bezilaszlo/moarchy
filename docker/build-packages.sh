@@ -214,6 +214,13 @@ if [ -d /repo/pkgbuilds ]; then
 
   for d in /home/builder/repo/pkgbuilds/*/; do
     p=$(basename "$d")
+    # The willow recipes package vendor blobs that only exist on a machine that
+    # has staged them; a tree without them still has to build everything else.
+    if grep -q 'sources/willow' "$d/PKGBUILD" 2>/dev/null &&
+       [ ! -d /home/builder/repo/sources/willow ]; then
+      echo "!! SKIPPING $p: sources/willow is not staged -- run scripts/stage-willow.sh" >&2
+      continue
+    fi
     echo "==> $p (in-repo)"
     if already_built "$d"; then
       echo "    already in $OUT for this version -- kept"

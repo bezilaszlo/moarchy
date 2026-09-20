@@ -1,0 +1,30 @@
+. "$startdir/../../scripts/manifest.sh"
+pkgname=firmware-moarchy-willow
+pkgver=$(manifest_get device.willow firmware-version) || return 1
+pkgrel=1
+pkgdesc='Willow GPU and WLAN/MPSS firmware from the pinned stock ROM'
+arch=('any')
+url='https://github.com/Huabin1010/ginkgo-mainline-linux'
+license=('LicenseRef-proprietary')
+options=('!strip' '!debug')
+source=("file://$startdir/../../sources/willow/firmware.tar")
+sha256sums=("$(manifest_get device.willow firmware-sha256)")
+
+# In build(), not check(): docker/build-packages.sh builds in-repo recipes with --nocheck.
+build() {
+  local f
+  for f in qcom/a630_sqe.fw qcom/sm6125/xiaomi/ginkgo/a610_zap.mdt \
+    qcom/sm6125/xiaomi/ginkgo/modem.mdt ath10k/WCN3990/hw1.0/board.bin \
+    ath10k/WCN3990/hw1.0/wlanmdsp.mbn ath10k/WCN3990/hw1.0/firmware-5.bin; do
+    [ -s "$srcdir/$f" ] || { echo "!! $f is not in the staged firmware archive"; return 1; }
+  done
+}
+
+package() {
+  # firmware_class.path makes these pins take precedence without package file conflicts.
+  install -d "$pkgdir/usr/lib/firmware/moarchy-willow"
+  cd "$srcdir"
+  while IFS= read -r -d '' file; do
+    install -Dm644 "$file" "$pkgdir/usr/lib/firmware/moarchy-willow/$file"
+  done < <(find qcom ath10k -type f -print0)
+}

@@ -1,0 +1,37 @@
+. "$startdir/../../scripts/manifest.sh"
+pkgname=moarchy-device-willow
+pkgver=$(manifest_get moarchy version) || return 1
+pkgrel=1
+pkgdesc='Experimental Redmi Note 8T profile for moarchy'
+arch=('any')
+url='https://github.com/SimonSchubert/moarchy'
+license=('MIT')
+depends=('linux-moarchy-sm6125' 'firmware-moarchy-willow' 'moarchy-qcom-modem')
+provides=('moarchy-device')
+conflicts=('moarchy-device')
+source=('device.conf' 'hypr-device.lua'
+        'moarchy-willow-mpss' 'moarchy-willow-mpss.service'
+        'moarchy-willow-usbnet' 'moarchy-willow-usbnet.service'
+        'moarchy-willow-swapfile' 'moarchy-willow-swapfile.service'
+        '90-moarchy-willow-usb0.conf')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -Dm644 "$srcdir/device.conf" "$pkgdir/usr/share/moarchy/device/device.conf"
+  install -Dm644 "$srcdir/hypr-device.lua" "$pkgdir/usr/share/moarchy/device/hypr/device.lua"
+  printf 'codename=willow\n' > "$pkgdir/usr/share/moarchy/device/build-info"
+
+  install -Dm644 "$srcdir/90-moarchy-willow-usb0.conf" \
+    "$pkgdir/usr/lib/NetworkManager/conf.d/90-moarchy-willow-usb0.conf"
+
+  # Enabled by the package: first access must not depend on a first-boot script.
+  install -d "$pkgdir/usr/lib/systemd/system/multi-user.target.wants"
+  local unit
+  for unit in mpss usbnet swapfile; do
+    install -Dm755 "$srcdir/moarchy-willow-$unit" "$pkgdir/usr/bin/moarchy-willow-$unit"
+    install -Dm644 "$srcdir/moarchy-willow-$unit.service" \
+      "$pkgdir/usr/lib/systemd/system/moarchy-willow-$unit.service"
+    ln -s "../moarchy-willow-$unit.service" \
+      "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/moarchy-willow-$unit.service"
+  done
+}
