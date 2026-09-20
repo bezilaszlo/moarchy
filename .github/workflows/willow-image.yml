@@ -12,30 +12,97 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
   WS: ${{ github.workspace }}/../ws
+  DEVICE: willow
+  LOG: ${{ runner.temp }}/build.log
+  PKGBUILD_ONLY: >-
+    moarchy moarchy-meta moarchy-keyring omarchy-config bootmac moarchy-waydroid
+    linux-moarchy-sm6125 firmware-moarchy-willow moarchy-device-willow
 
 jobs:
   image:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Disk before
-        run: df -h /
       - name: Stage pinned inputs
         run: |
+          set -o pipefail
           scripts/ci-willow-inputs.sh "$WS"
           bash scripts/stage-willow.sh "$WS"
           df -h /
       - name: Diagnostic image reproduces
         run: |
+          set -o pipefail
           WORK="$WS" image/diag-willow/build.sh
           git diff --exit-code image/diag-willow/SHA256SUMS
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: packages
+          key: pkgs-${{ hashFiles('pkgbuilds/**', 'manifest.toml', 'bin/**', 'config/**', 'default/**', 'docker/**') }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .cache/upstream
+          key: upstream-${{ hashFiles('manifest.toml') }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .cache/pacman
+          key: pacman-${{ hashFiles('pkgbuilds/moarchy-meta/PKGBUILD') }}-${{ github.run_id }}
+          restore-keys: pacman-${{ hashFiles('pkgbuilds/moarchy-meta/PKGBUILD') }}-
+      - name: Build the in-repo packages
+        run: |
+          set -o pipefail
+          mkdir -p packages && chmod 777 packages
+          ./scripts/provision.sh build 2>&1 | tee -a "$LOG"
+      - name: Packages from the published repo
+        run: |
+          set -o pipefail
+          scripts/ci-willow-packages.sh 2>&1 | tee -a "$LOG"
+      - name: Build the image
+        env:
+          MOARCHY_SSH_KEY_VALUE: ${{ vars.MOARCHY_SSH_KEY }}
+        run: |
+          set -o pipefail
+          [ -n "$MOARCHY_SSH_KEY_VALUE" ] || { echo "vars.MOARCHY_SSH_KEY is empty" >&2; exit 1; }
+          printf '%s\n' "$MOARCHY_SSH_KEY_VALUE" > "$RUNNER_TEMP/key.pub"
+          MOARCHY_SSH_KEY="$RUNNER_TEMP/key.pub" ./scripts/build-image.sh 2>&1 | tee -a "$LOG"
           df -h /
+      - name: Verify the image
+        run: |
+          set -o pipefail
+          ./scripts/verify-image.sh 2>&1 | tee -a "$LOG"
+      - name: Boot-image tests
+        run: |
+          set -o pipefail
+          python3 image/boot/test-willow-boot.py 2>&1 | tee -a "$LOG"
+          python3 image/boot/test-android-image.py 2>&1 | tee -a "$LOG"
+          bash image/boot/test-backends.sh 2>&1 | tee -a "$LOG"
+      - name: Checksums
+        run: |
+          set -o pipefail
+          art=$(ls -td images/moarchy-willow-*/ | head -1)
+          ( cd "$art" && sha256sum ./* > SHA256SUMS && cat SHA256SUMS && ls -l )
+          echo "ART=${art%/}" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: willow-image
+          path: ${{ env.ART }}
+          retention-days: 7
+          compression-level: 0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: willow-diag-image
           path: images/diag-willow/boot-diag-willow.img
           retention-days: 7
           compression-level: 0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: willow-build-log
+          path: ${{ runner.temp }}/build.log
+          retention-days: 7

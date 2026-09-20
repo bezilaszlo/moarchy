@@ -143,7 +143,10 @@ clone_pinned() {   # clone_pinned <url> <dir> <ref> [extra git-clone args...]
 # never built, with a package missing from an image as the way you found out.
 # Order is the manifest's, and the keyboard is pinned first because it is the
 # component whose absence leaves the phone with no way to type at all.
+# PKGBUILD_ONLY names the in-repo recipes to build; everything else is expected
+# to come from the published repo. Unset, this builds the whole set as before.
 for component in $(manifest_components); do
+  [ -n "${PKGBUILD_ONLY:-}" ] && continue
   c_url=$(manifest_get "$component" url) || { failed+=("$component"); continue; }
   c_ref=$(manifest_get "$component" ref) || { failed+=("$component"); continue; }
   c_dir=$(manifest_get "$component" pkgbuilddir) || { failed+=("$component"); continue; }
@@ -176,6 +179,7 @@ done
 packages=$(manifest_aur_packages) || exit 1
 
 for pkg in $packages; do
+  [ -n "${PKGBUILD_ONLY:-}" ] && continue
   ref=$(manifest_get "aur.$pkg" ref) || { failed+=("$pkg"); continue; }
   echo "==> $pkg @ ${ref:0:7}"
   # No --filter here: the AUR's git server does not have to support partial
@@ -214,6 +218,9 @@ if [ -d /repo/pkgbuilds ]; then
 
   for d in /home/builder/repo/pkgbuilds/*/; do
     p=$(basename "$d")
+    if [ -n "${PKGBUILD_ONLY:-}" ] && ! printf '%s\n' ${PKGBUILD_ONLY} | grep -qx "$p"; then
+      continue
+    fi
     # The willow recipes package vendor blobs that only exist on a machine that
     # has staged them; a tree without them still has to build everything else.
     if grep -q 'sources/willow' "$d/PKGBUILD" 2>/dev/null &&
