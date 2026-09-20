@@ -60,6 +60,7 @@ jobs:
           set -o pipefail
           mkdir -p packages && chmod 777 packages
           ./scripts/provision.sh build 2>&1 | tee -a "$LOG"
+          sudo chown -R "$(id -u):$(id -g)" packages
       - name: Packages from the published repo
         run: |
           set -o pipefail
