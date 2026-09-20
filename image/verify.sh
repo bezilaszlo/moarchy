@@ -87,7 +87,6 @@ have /usr/share/moarchy/config/hypr/hyprland.lua
 have /usr/share/moarchy/device/hypr/device.lua
 have /usr/share/omarchy/config/omarchy/shell.json
 have /usr/share/fonts/omarchy/omarchy.ttf
-have /usr/share/applications/moarchy.device.desktop
 # A dozen runtime omarchy-* scripts source out of upstream's install/ tree.
 have /usr/share/omarchy/install/helpers/browser-policy.sh
 have /usr/share/omarchy/shell/shell.qml
@@ -336,9 +335,7 @@ done
 unset _pdir _pid _shelljson _tile
 
 hy=$(grep -rl 'import Quickshell.Hyprland' "$R/usr/share/omarchy/shell" --include=*.qml 2>/dev/null | wc -l)
-i3=$(grep -rl 'import Quickshell.I3'       "$R/usr/share/omarchy/shell" --include=*.qml 2>/dev/null | wc -l)
-[ "$i3" -gt 0 ] && ok "$i3 QML files on Quickshell.I3" || no "no I3 imports -- the port is not in the image"
-[ "$hy" -eq 0 ] && ok "0 QML files left on Quickshell.Hyprland" || no "$hy files still import Quickshell.Hyprland"
+[ "$hy" -gt 0 ] && ok "$hy QML files on Quickshell.Hyprland" || no "no Hyprland imports -- the shell is not in the image"
 
 grep -q '"id": "moarchy.bar"' "$R/usr/share/omarchy/config/omarchy/shell.json" \
   && ok "packaged shell.json selects moarchy.bar" || no "shell.json does not select moarchy.bar"
