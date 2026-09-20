@@ -53,15 +53,26 @@ def make_bootimg(kernel: bytes, ramdisk: bytes, cmdline: str,
                  ramdisk_addr: int = 0x01000000,
                  second_addr: int = 0x00000000,
                  tags_addr: int = 0x00000100,
-                 os_version: int = 0) -> bytes:
-    """Build a header-v0 Android boot image.
+                 os_version: int = 0, header_version: int = 0,
+                 dtb: bytes = b"", dtb_addr: int = 0x01f00000) -> bytes:
+    """Build v0 (appended DTB) or v2 (separate DTB, no recovery DTBO).
 
     `kernel` is expected to already have its DTB appended -- sargo's deviceinfo
     sets append_dtb=true, and pmOS's image carries FDT magic inside the kernel
     payload rather than in the `second` area. Doing it here would hide a device
     decision inside a generic writer.
     """
+    if header_version not in (0, 2):
+        raise ValueError("only boot header versions 0 and 2 are supported")
+    if page_size not in (2048, 4096, 8192, 16384):
+        raise ValueError("invalid Android boot page size")
+    if header_version == 2 and not dtb:
+        raise ValueError("header v2 requires a separate DTB")
+    if header_version == 0 and dtb:
+        raise ValueError("header v0 requires the DTB appended to kernel")
     cmd = cmdline.encode()
+    if b"\0" in cmd:
+        raise ValueError("cmdline must not contain NUL")
     if len(cmd) > 512 + 1024:
         raise ValueError(f"cmdline is {len(cmd)} bytes; the v0 header holds 1536")
     # The header splits cmdline across two fields at a fixed boundary.
@@ -74,7 +85,7 @@ def make_bootimg(kernel: bytes, ramdisk: bytes, cmdline: str,
         len(ramdisk), ramdisk_addr,
         0, second_addr,              # no `second` stage
         tags_addr, page_size,
-        0,                           # header_version
+        header_version,
         os_version,
     )
     hdr += b"\0" * 16                                  # product name
@@ -86,15 +97,21 @@ def make_bootimg(kernel: bytes, ramdisk: bytes, cmdline: str,
     # reproduce pmOS's own image byte-for-byte, which is the only evidence that
     # every other field above is right too.
     sha = hashlib.sha1()
-    for part in (kernel, ramdisk, b""):
+    parts = (kernel, ramdisk, b"")
+    if header_version == 2:
+        parts += (b"", dtb)  # v2 hashes the absent recovery DTBO before the DTB.
+    for part in parts:
         sha.update(part)
         sha.update(struct.pack("<I", len(part)))
     hdr += sha.digest().ljust(32, b"\0")
     hdr += extra_field.ljust(1024, b"\0")
+    if header_version == 2:
+        hdr += struct.pack("<IQIIQ", 0, 0, 1660, len(dtb), dtb_addr)
 
     return (pad_to(bytes(hdr), page_size)
             + pad_to(kernel, page_size)
-            + pad_to(ramdisk, page_size))
+            + pad_to(ramdisk, page_size)
+            + (pad_to(dtb, page_size) if header_version == 2 else b""))
 
 
 # --- AVB vbmeta -------------------------------------------------------------
@@ -146,7 +163,8 @@ def _main(argv):
     # A zero-length one gives ramdisk_size = 0, which mkbootimg also writes,
     # and make_bootimg() needs no special case for it.
     b.add_argument("--ramdisk", help="omitted for a kernel that mounts root itself")
-    b.add_argument("--dtb", help="appended to the kernel (sargo: required)")
+    b.add_argument("--dtb", help="appended for v0, separate and required for v2")
+    b.add_argument("--header-version", type=int, choices=(0, 2), default=0)
     b.add_argument("--cmdline", default="")
     b.add_argument("--pagesize", type=int, default=4096)
     b.add_argument("--out", required=True)
@@ -160,10 +178,13 @@ def _main(argv):
 
     if a.cmd == "bootimg":
         kernel = open(a.kernel, "rb").read()
-        if a.dtb:
-            kernel += open(a.dtb, "rb").read()
+        dtb = open(a.dtb, "rb").read() if a.dtb else b""
+        if a.header_version == 0:
+            kernel += dtb
+            dtb = b""
         ramdisk = open(a.ramdisk, "rb").read() if a.ramdisk else b""
-        img = make_bootimg(kernel, ramdisk, a.cmdline, page_size=a.pagesize)
+        img = make_bootimg(kernel, ramdisk, a.cmdline, page_size=a.pagesize,
+                           header_version=a.header_version, dtb=dtb)
         open(a.out, "wb").write(img)
         rd = f"ramdisk {len(ramdisk)}" if ramdisk else "no ramdisk"
         print(f"boot.img: {len(img)} bytes "
