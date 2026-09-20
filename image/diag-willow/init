@@ -1,0 +1,131 @@
+#!/bin/sh
+# moarchy-willow diagnostic init. Contract: mounts and writes no eMMC partition
+# data. Only virtual filesystems are mounted, and every mmcblk node is flipped
+# read-only at the block layer (re-applied every report cycle).
+# Not claimed: "touches nothing". The kernel's eMMC init sets EXT_CSD device
+# registers (bus width, timing, cache) exactly as Android does on every boot.
+# The DTB /chosen bootargs say `root=... rw init=/init`; that is inert because
+# an initramfs /init exists, so prepare_namespace() is never reached
+# (v7.0 init/main.c kernel_init_freeable: init_eaccess(ramdisk_execute_command)).
+export PATH=/bin:/sbin
+/bin/busybox --install -s /bin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+# The initramfs has no /dev/console, so init starts without stdio; attach it now.
+exec </dev/console >/dev/console 2>&1
+mkdir -p /dev/pts /sys/kernel/config /sys/kernel/debug /sys/fs/pstore
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /tmp
+mount -t tmpfs tmpfs /run
+mount -t configfs none /sys/kernel/config
+mount -t debugfs none /sys/kernel/debug 2>/dev/null
+mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+
+say() { echo "$*"; echo "diag: $*" > /dev/kmsg; }
+
+# Storage can appear a moment after init starts. Wait for the partition table
+# to settle (want 87; give up after 15 s), then lock every block node. The
+# partition scan can still be running when the disk node shows up, so this is
+# re-applied on every report cycle below.
+lock_ro() {
+  for b in /dev/mmcblk*; do
+    [ -b "$b" ] && blockdev --setro "$b" 2>/dev/null
+  done
+}
+nparts() { ls -d /sys/class/block/mmcblk0p* 2>/dev/null | wc -l; }
+i=0; last=-1; stable=0
+while [ $i -lt 75 ]; do
+  n=$(nparts)
+  if [ "$n" -gt 0 ] && [ "$n" = "$last" ]; then stable=$((stable+1)); else stable=0; fi
+  last=$n
+  [ "$n" -ge 87 ] && [ $stable -ge 2 ] && break
+  sleep 0.2; i=$((i+1))
+done
+lock_ro
+
+# USB: force device role, then an RNDIS gadget (the function the community
+# system is known to work with) + DHCP so the host needs no configuration.
+for r in /sys/class/usb_role/*/role; do [ -e "$r" ] && echo device > "$r" 2>/dev/null; done
+G=/sys/kernel/config/usb_gadget/diag
+mkdir -p $G && cd $G && {
+  echo 0x1d6b > idVendor; echo 0x0104 > idProduct
+  mkdir -p strings/0x409 configs/c.1/strings/0x409 functions/rndis.usb0
+  echo moarchy-willow-diag > strings/0x409/serialnumber
+  echo moarchy > strings/0x409/manufacturer
+  echo "willow diagnostic" > strings/0x409/product
+  echo RNDIS > configs/c.1/strings/0x409/configuration
+  echo 02:00:00:00:42:01 > functions/rndis.usb0/host_addr
+  echo 02:00:00:00:42:02 > functions/rndis.usb0/dev_addr
+  ln -s functions/rndis.usb0 configs/c.1/
+  i=0; UDC=; while [ -z "$UDC" ] && [ $i -lt 60 ]; do UDC=$(ls /sys/class/udc 2>/dev/null | head -1); [ -z "$UDC" ] && sleep 0.5; i=$((i+1)); done
+  [ -n "$UDC" ] && echo "$UDC" > UDC
+}
+cd /
+# ECM probe (moarchy's real image uses CDC-ECM; only RNDIS is proven on this
+# UDC). Throwaway gadget, function never linked into a config, never bound.
+P=/sys/kernel/config/usb_gadget/ecmprobe
+if mkdir $P 2>/dev/null && mkdir $P/functions/ecm.probe 2>/dev/null; then
+  echo "created (never bound)" > /run/ecm-probe
+else
+  echo "FAILED (mkdir ecm.probe refused: f_ecm missing?)" > /run/ecm-probe
+fi
+rmdir $P/functions/ecm.probe 2>/dev/null; rmdir $P 2>/dev/null
+i=0; while [ ! -e /sys/class/net/usb0 ] && [ $i -lt 40 ]; do sleep 0.25; i=$((i+1)); done
+ifconfig lo 127.0.0.1 up
+ifconfig usb0 172.16.42.1 netmask 255.255.255.0 up 2>/dev/null
+udhcpd /etc/udhcpd.conf 2>/dev/null
+telnetd -l /bin/sh -p 23
+mkdir -p /run/www
+httpd -p 80 -h /run/www 2>/dev/null
+
+# Prove the touch firmware really loaded: the NVT driver logs an explicit
+# success line, or one of several failure lines. The input device name alone
+# says nothing (the driver registers it before/without a successful download).
+touch_fw() {
+  nvt=$(dmesg | grep -E 'NVT|nvt' | grep -iE 'firmware|fw' )
+  if echo "$nvt" | grep -q 'Update firmware success'; then
+    echo "OK   $(echo "$nvt" | grep -m1 "fw name" | sed 's/.*fw name=//')"
+  elif echo "$nvt" | grep -qiE 'failed|not match|broken'; then
+    echo "FAIL $(echo "$nvt" | grep -iE 'failed|not match|broken' | tail -1 | cut -c1-90)"
+  else
+    echo "NOT SEEN (driver never reported a firmware result)"
+  fi
+}
+
+report() {
+  echo "=== moarchy-willow diagnostic $(date -u +%H:%M:%S)  (no eMMC partition mounted) ==="
+  echo "kernel : $(cut -d' ' -f3 /proc/version)"
+  echo "model  : $(tr -d '\0' < /proc/device-tree/model)"
+  echo "memory : $(awk '/MemTotal/{print int($2/1024)" MB"}' /proc/meminfo)"
+  n=$(ls -d /sys/class/block/mmcblk0p* 2>/dev/null | wc -l)
+  ud=$(grep -l '^PARTNAME=userdata$' /sys/class/block/*/uevent 2>/dev/null | head -1 | cut -d/ -f5)
+  bt=$(grep -l '^PARTNAME=boot$' /sys/class/block/*/uevent 2>/dev/null | head -1 | cut -d/ -f5)
+  echo "emmc   : ${n} partitions, userdata=${ud:-MISSING} (want mmcblk0p87), boot=${bt:-MISSING} (want mmcblk0p72)"
+  rw=0; for d in /sys/class/block/mmcblk*; do [ "$(cat $d/ro 2>/dev/null)" = 0 ] && rw=$((rw+1)); done
+  echo "emmc ro: mmcblk0=$(cat /sys/class/block/mmcblk0/ro 2>/dev/null) (want 1), rw block nodes=$rw (want 0)"
+  echo "drm    : $(ls /sys/class/drm 2>/dev/null | tr '\n' ' ')"
+  echo "gpu    : $(dmesg | grep -iE 'adreno|a6xx|zap|sqe|msm_dpu|\[drm\]' | tail -4 | cut -c1-110 | tr '\n' '|')"
+  echo "touchfw: $(touch_fw)"
+  echo "input  : $(grep -h '^N: Name' /proc/bus/input/devices 2>/dev/null | cut -d= -f2 | tr '\n' ' ')"
+  echo "rproc  : $(for r in /sys/class/remoteproc/*; do [ -e $r/state ] && printf '%s=%s ' "$(cat $r/name 2>/dev/null)" "$(cat $r/state)"; done)"
+  echo "wifi   : $(ls /sys/class/net | tr '\n' ' ')"
+  echo "power  : $(for p in /sys/class/power_supply/*; do [ -e $p/capacity ] && printf '%s=%s%% ' "${p##*/}" "$(cat $p/capacity)"; done)"
+  echo "ecm    : $(cat /run/ecm-probe 2>/dev/null)"
+  echo "udc    : $(ls /sys/class/udc 2>/dev/null) state=$(cat /sys/class/udc/*/state 2>/dev/null)"
+  echo "pstore : $(ls /sys/fs/pstore 2>/dev/null | tr '\n' ' ')"
+  echo "svc    : $(ps | grep -E 'telnetd|httpd|udhcpd' | grep -v grep | awk '{print $NF?$4:$4}' | tr '\n' ' ')"
+  echo "fw fail: $(dmesg | grep -ciE 'firmware.*(fail|error)|Direct firmware load')"
+  echo "shell  : from the PC:  telnet 172.16.42.1     leave: 'reboot -f' (back to MIUI) / hard hang: hold Power ~10 s"
+}
+
+mkdir -p /run/www
+say "diagnostic init up; telnet 172.16.42.1"
+while :; do
+  lock_ro
+  report > /run/www/report.txt 2>&1
+  dmesg > /run/www/dmesg.txt 2>&1
+  cat /run/www/report.txt > /dev/console 2>/dev/null
+  sleep 15
+done
