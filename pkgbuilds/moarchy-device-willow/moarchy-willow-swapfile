@@ -4,8 +4,7 @@ set -eu
 
 file=/var/swapfile
 size_mib=2048
-# Headroom, because a full rootfs is not a phone with less swap: it is logind
-# and every StateDirectory= unit failing with ENOSPC. Measured in QEMU.
+# Leave room: a full rootfs makes logind and every StateDirectory= unit fail with ENOSPC.
 keep_mib=1024
 
 if [ ! -f "$file" ]; then

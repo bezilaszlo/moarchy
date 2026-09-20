@@ -110,8 +110,7 @@ cp /etc/resolv.conf "$ROOTDIR/etc/resolv.conf" ||
 # modules.builtin is a list of the .ko files this kernel does NOT ship, which
 # is precisely the question being asked.
 #
-# A pinned binary kernel ships neither modules nor that list, so BUILTIN_CHECK=config
-# reads the config extracted from that exact binary and matches its banner.
+# A pinned binary kernel ships no modules and no such list, so BUILTIN_CHECK=config reads its config.
 if [ "$BUILTIN_CHECK" = modules ]; then
   local _builtin="$ROOTDIR/usr/lib/modules/$KREL/modules.builtin"
   [ -f "$_builtin" ] || die "no modules.builtin for $KREL -- cannot check what is built in"
@@ -165,8 +164,7 @@ local OUTDIR="$OUT/$NAME"
 rm -rf "$OUTDIR"; mkdir -p "$OUTDIR"
 
 say "boot image"
-# HEADER_VERSION decides where the DTB goes: appended to the kernel on sargo,
-# in its own area on willow. Either choice on the other phone is a black screen.
+# HEADER_VERSION decides where the DTB goes; the wrong choice for a phone is a black screen.
 #
 # The cmdline. ABL does not pass this through; it BUILDS one, putting ~40
 # androidboot.* parameters of its own first, this string next, and console=null
@@ -284,8 +282,7 @@ smagic=$(dd if="$OUTDIR/rootfs.simg" bs=4 count=1 status=none | od -An -tx1 | tr
 
 say "flash script"
 # Written rather than documented, because the ORDER is load-bearing and a
-# README gets read afterwards. One writer per device: sargo flashes boot and
-# marks a slot, willow does neither, and the reader is holding a phone.
+# README gets read afterwards. One writer per device: sargo flashes boot, willow does not.
 _flash_script > "$OUTDIR/flash.sh"
 chmod +x "$OUTDIR/flash.sh"
 

@@ -79,9 +79,7 @@ rdsz=$(od -An -tu4 -j16 -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
 # below needs it and so does the DTB extraction further down.
 ksize=$(od -An -tu4 -j8 -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
 
-# The whole file should then be the header page plus the padded kernel and,
-# on v2, the padded DTB. Catches a stray page or a truncated payload, both of
-# which boot into silence.
+# Header page plus padded kernel, plus the padded DTB on v2: catches a stray or truncated page.
 # dtb_size is a little-endian u32 at byte 1648, after the v1 fields.
 dtbsz=0
 [ "$hver" = 2 ] && dtbsz=$(od -An -tu4 -j1648 -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
@@ -91,8 +89,7 @@ have=$(stat -c%s "$IMG_XZ/boot.img")
                       || no "boot.img is $have bytes, not the $want its header describes"
 
 if [ "$DEVICE" = willow ]; then
-# Measured off the v0.4.0 image this phone's bootloader accepted; a wrong load
-# address is a black screen with nothing to read.
+# Measured off the v0.4.0 image this bootloader accepted; a wrong load address is a black screen.
 for _f in 12:32768:kernel_addr 20:16777216:ramdisk_addr 32:256:tags_addr; do
   _off=${_f%%:*}; _rest=${_f#*:}; _want=${_rest%%:*}; _name=${_rest#*:}
   _got=$(od -An -tu4 -j"$_off" -N4 "$IMG_XZ/boot.img" 2>/dev/null | tr -d ' ')
@@ -145,8 +142,7 @@ flashpart=$(sed -n 's/^ROOTPART=//p' "$IMG_XZ/flash.sh" | head -1)
   || no "cmdline boots from '${cmdpart:-?}' but flash.sh writes the rootfs to '${flashpart:-?}'"
 
 if [ "$DEVICE" = willow ]; then
-  # Without this the kernel finds linux-firmware's Adreno microcode first and
-  # the phone runs firmware that was never signed for it.
+  # Without this the kernel loads linux-firmware's Adreno microcode, unsigned for this phone.
   case " $cmdline " in
     *" firmware_class.path=/usr/lib/firmware/moarchy-willow "*)
       ok "firmware_class.path points at the pinned willow firmware" ;;
@@ -467,8 +463,7 @@ else
 fi
 
 sec "the Wi-Fi chain (D27), willow's own firmware"
-# firmware_class.path in the cmdline is what makes this directory win over
-# linux-firmware's copies of the same names.
+# firmware_class.path in the cmdline is what makes this directory win over linux-firmware's.
 _fw="$R/usr/lib/firmware/moarchy-willow"
 for _f in qcom/a630_sqe.fw qcom/sm6125/xiaomi/ginkgo/a610_zap.mdt \
           qcom/sm6125/xiaomi/ginkgo/modem.mdt ath10k/WCN3990/hw1.0/wlanmdsp.mbn \
