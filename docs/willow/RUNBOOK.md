@@ -63,8 +63,10 @@ telnet 172.16.42.1
 
 Pass needs ALL of: kernel log and status report on the phone screen; a shell over USB;
 eMMC detected with 87 partitions; partition labels match ginkgo's, `userdata` is p87 (`boot` p72);
-GPU firmware loaded (a610 zap + a630 sqe); touch firmware `OK`; rw block-node count `0`.
-A visible log without a shell is not a pass. Note the `ecm:` line for step 7.
+GPU firmware loaded (a610 zap + a630 sqe); touch firmware `OK`; rw block-node count `0`;
+the `ecm:` line read and recorded.
+A visible log without a shell is not a pass. The `ecm:` line is information for step 7, not a stop:
+whatever it says, it does not fail this gate.
 From the shell, read back GPT and the calibration partitions to the desktop before installing.
 Leave with `reboot -f` (returns to MIUI), then `adb reboot bootloader`.
 Stop if: any criterion fails. Frozen or black screen: hold Power ~10 s; MIUI returns. Do not go on.
@@ -115,7 +117,13 @@ fastboot reboot
 ```
 
 Expect: prompt, type `PERSIST`; then the phone comes up on its own, twice, with no cable-side boot.
-Stop if: it does not come up. Go to step 9 or `fastboot boot` the diagnostic image.
+
+Checkpoint after EACH reboot, before triggering the next one: `ssh moarchy@172.16.42.1` answers, and
+a spot-check of step 6 (display, touch, Wi-Fi association, charging) passes. Write it down. An
+unobserved reboot does not count as one of the two, and the second reboot does not start until the
+first is recorded.
+
+Stop if: it does not come up, or a checkpoint fails. Go to step 9 or `fastboot boot` the diagnostic image.
 
 ## 9. Restore
 
