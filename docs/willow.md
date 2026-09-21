@@ -97,6 +97,16 @@ nothing is one power cycle from MIUI. The boot partition stays stock until
 For a black screen, the diagnostic image (`image/diag-willow/`) is the way in:
 same kernel and DTB, a ramdisk with USB networking and a shell.
 
+## ECM fallback
+
+`usb0` never appears on the desktop: do not add RNDIS to the installed image (D19).
+`fastboot boot` the diagnostic image instead — RNDIS on 172.16.42.1, `telnetd` on
+port 23 — and read its `ecm:` report line, which says whether the kernel has
+`f_ecm` at all. That separates a missing gadget function from a host that did not
+enumerate a working one. The diagnostic image mounts no partition, so it
+diagnoses and nothing more; the fix lands in `moarchy-willow-usbnet` and a
+rebuilt image.
+
 ## Checked in QEMU
 
 `qemu-system-aarch64 -M virt` with the pinned `Image.gz` and the built rootfs
