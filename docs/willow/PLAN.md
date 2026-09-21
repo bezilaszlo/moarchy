@@ -188,7 +188,9 @@ moarchy is at fault. The hardware acceptance list runs on moarchy (3.2b).
   Landlock; check in 0.2, and if absent pacman on-device needs `--disable-sandbox`.
 - 8T does not boot the ginkgo kernel → restore stock with the fastboot ROM; LineageOS + Termux,
   or a Pixel 3a for moarchy.
-- Restore at any point: `flash_all.sh` from the stock ROM (do NOT use `flash_all_lock.sh`).
+- Restore at any point: `scripts/willow-restore-stock.sh` (boot, dtbo, vbmeta, erase userdata;
+  hash-checked against V12.5.5.0.RCXEUXM). The stock `flash_all.sh` is a gated last resort only:
+  it writes xbl/abl/tz and raises anti-rollback. Never `flash_all_lock.sh`.
 
 ## Not doing
 

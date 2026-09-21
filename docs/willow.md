@@ -119,6 +119,10 @@ case. None of this says anything about the phone.
 
 ## Not proven
 
+CI installs the components and AUR packages from the signed upstream binary repository rather than
+building them at their manifest pins, so a CI image can carry different component versions than a
+local one. Known, accepted for build speed.
+
 No hardware has run any of this. A verified image is not a booting phone: the
 panel, GPU firmware load, touch, Wi-Fi association, charging, suspend and USB
 recovery are all unknown until the gate in PLAN 1.3 passes.

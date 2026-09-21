@@ -14,16 +14,22 @@ Never run `flash_all_lock.sh`. Never accept a format/reset prompt on the phone. 
 
 ```sh
 cd $W/moarchy-willow-port
+head=$(git rev-parse HEAD)
 gh workflow run willow-image.yml --ref willow-port
-gh run watch "$(gh run list --workflow willow-image.yml --limit 1 --json databaseId -q '.[0].databaseId')"
-rm -rf /tmp/willow && gh run download -n willow-image -D /tmp/willow/image && gh run download -n willow-diag-image -D /tmp/willow/diag
+sleep 15
+run=$(gh run list --workflow willow-image.yml --branch willow-port --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$run"
+gh run view "$run" --json headSha,conclusion,headBranch
+rm -rf /tmp/willow && gh run download "$run" -n willow-image -D /tmp/willow/image && gh run download "$run" -n willow-diag-image -D /tmp/willow/diag
 (cd /tmp/willow/image && sha256sum -c SHA256SUMS)
 (cd /tmp/willow/diag && sha256sum -c $W/moarchy-willow-port/image/diag-willow/SHA256SUMS)
 (cd $W/community-boot && sha256sum dtbo-empty.img) && grep dtbo-empty $W/community-boot/SHA256SUMS
 ```
 
-Expect: run concludes `success`; every line `OK`; the two dtbo hashes match.
-Stop if: the run fails, any hash differs, or the diag image no longer matches the committed `SHA256SUMS`.
+Expect: `headSha` equals `$head`, `headBranch` is `willow-port`, `conclusion` is `success`; every
+line `OK`; the two dtbo hashes match. Both downloads name that same run id.
+Stop if: the run fails, the SHA or branch is not yours, any hash differs, or the diag image no longer
+matches the committed `SHA256SUMS`.
 
 ## 1. Bootloader
 
@@ -112,8 +118,10 @@ See "ECM fallback" in `../willow.md`: boot the diagnostic image, read its `ecm:`
 ## 8. Persist (only after two good boots of this exact image and step 6 recorded)
 
 ```sh
-cd /tmp/willow/image && bash ./flash.sh --persist
-fastboot reboot
+cd /tmp/willow/image
+fastboot devices                                    # exactly one line, or set ANDROID_SERIAL
+serial=${ANDROID_SERIAL:-$(fastboot devices | awk 'NR==1 {print $1}')}
+bash ./flash.sh --persist && fastboot -s "$serial" reboot
 ```
 
 Expect: prompt, type `PERSIST`; then the phone comes up on its own, twice, with no cable-side boot.
@@ -123,7 +131,9 @@ a spot-check of step 6 (display, touch, Wi-Fi association, charging) passes. Wri
 unobserved reboot does not count as one of the two, and the second reboot does not start until the
 first is recorded.
 
-Stop if: it does not come up, or a checkpoint fails. Go to step 9 or `fastboot boot` the diagnostic image.
+Stop if: `flash.sh --persist` exits non-zero — the `&&` means the reboot does not run and nothing
+was written — or it does not come up, or a checkpoint fails. Go to step 9 or `fastboot boot` the
+diagnostic image.
 
 ## 9. Restore
 
