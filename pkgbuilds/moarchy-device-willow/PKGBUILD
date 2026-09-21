@@ -1,7 +1,7 @@
 . "$startdir/../../scripts/manifest.sh"
 pkgname=moarchy-device-willow
 pkgver=$(manifest_get moarchy version) || return 1
-pkgrel=1
+pkgrel=2
 pkgdesc='Experimental Redmi Note 8T profile for moarchy'
 arch=('any')
 url='https://github.com/SimonSchubert/moarchy'

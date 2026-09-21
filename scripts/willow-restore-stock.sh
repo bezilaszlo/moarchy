@@ -17,8 +17,21 @@ done
 export PATH="$HOME/.local/opt/platform-tools:$PATH"
 command -v fastboot >/dev/null || { echo "!! fastboot not on PATH" >&2; exit 1; }
 
-for f in boot.img dtbo.img vbmeta.img; do
+STOCK_ROM='willow_eea V12.5.5.0.RCXEUXM'
+# A boot chain from another ROM version is the anti-rollback trap, so hashes decide, not filenames.
+sum() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+for pair in \
+  boot.img:0bc5c5f6ae68119d1182a39a033693115748af180a9945ea38a51800e0908748 \
+  dtbo.img:e955e0c87ad32904d2d0bb891483c4a70bba8a530b385ead4039437ca20dc878 \
+  vbmeta.img:bba7dbd799a6261c1e2a63bd31fd900f6cbe2837e21507badad7515ffbd7e074; do
+  f=${pair%%:*}; want=${pair#*:}
   [ -s "$dir/$f" ] || { echo "!! missing $dir/$f" >&2; exit 1; }
+  got=$(sum "$dir/$f")
+  [ "$got" = "$want" ] || {
+    echo "!! $dir/$f is not $STOCK_ROM ($got) -- refusing" >&2; exit 1; }
 done
 
 getvar() { fastboot getvar "$1" 2>&1 | sed -n "s/^$1: *//p" | head -1; }

@@ -8,8 +8,22 @@ if [ ! -d /sys/kernel/config/usb_gadget ]; then
   mount -t configfs none /sys/kernel/config 2>/dev/null || true
 fi
 [ -d /sys/kernel/config/usb_gadget ] || { echo "configfs has no usb_gadget" >&2; exit 1; }
+teardown() {
+  printf '' > "$G/UDC" 2>/dev/null || true
+  rm -f "$G/configs/c.1/ecm.usb0"
+  rmdir "$G/configs/c.1/strings/0x409" "$G/configs/c.1" 2>/dev/null || true
+  rmdir "$G/functions/ecm.usb0" "$G/strings/0x409" 2>/dev/null || true
+  rmdir "$G" 2>/dev/null || true
+}
+
 if [ -d "$G" ]; then
-  exit 0
+  if [ -n "$(cat "$G/UDC" 2>/dev/null)" ] && [ -e /sys/class/net/usb0 ]; then
+    ip address show dev usb0 | grep -q 172.16.42.1/24 ||
+      ip address add 172.16.42.1/24 dev usb0
+    ip link set usb0 up
+    exit 0
+  fi
+  teardown
 fi
 
 for role in /sys/class/usb_role/*/role; do
