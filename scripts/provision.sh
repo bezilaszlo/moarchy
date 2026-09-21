@@ -111,6 +111,7 @@ step_build() {
   [ "$_dirty" = 1 ] && info "!! the working tree is dirty; these packages match no commit"
   docker run --rm --platform linux/arm64 -v "$PWD/packages:/out" \
     -e "COMMIT=$_commit" -e "DIRTY=$_dirty" -e "REBUILD=${REBUILD:-0}" \
+    -e "PKGBUILD_ONLY=${PKGBUILD_ONLY:-}" \
     moarchy-builder
   info "built: $(ls -1 packages/*.pkg.tar.* 2>/dev/null | wc -l | tr -d ' ') packages"
   info "  (the components, the AUR rebuilds, and pkgbuilds/: moarchy,"
