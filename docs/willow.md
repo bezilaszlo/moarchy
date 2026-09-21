@@ -57,7 +57,10 @@ runs on the modem DSP), the USB network gadget, and the swapfile. No qbootctl
 
 - `DisableSandbox` in the image's `/etc/pacman.conf`, written by
   `backend_kernel`. Signature checking is untouched.
-- A 2 GiB swapfile on userdata, created on first boot, instead of zram.
+- A 2 GiB swapfile on userdata instead of zram, created on first boot and
+  skipped unless /var has 3 GiB free. On a phone the rootfs has grown into
+  userdata first; on an ungrown image it has not, and filling it takes logind
+  and every `StateDirectory=` unit down with ENOSPC.
 - CDC-ECM on `usb0` at 172.16.42.1/24, raised by `moarchy-willow-usbnet` and
   left alone by NetworkManager. From the desktop:
   `sudo ip addr add 172.16.42.2/24 dev <iface> && ssh moarchy@172.16.42.1`.
@@ -93,6 +96,16 @@ nothing is one power cycle from MIUI. The boot partition stays stock until
 
 For a black screen, the diagnostic image (`image/diag-willow/`) is the way in:
 same kernel and DTB, a ramdisk with USB networking and a shell.
+
+## Checked in QEMU
+
+`qemu-system-aarch64 -M virt` with the pinned `Image.gz` and the built rootfs
+boots to `moarchy login:`, Multi-User System and Graphical Interface, with sshd
+up and key-only. Three units fail there and only there: the camera-flash LED
+rules, the MPSS starter (`MPSS remoteproc did not appear`) and the USB gadget
+(`no UDC: this kernel has no usb device controller`). The swapfile unit reports
+`only 290M free on /var; no swapfile` and exits 0, which is the ungrown-image
+case. None of this says anything about the phone.
 
 ## Not proven
 
