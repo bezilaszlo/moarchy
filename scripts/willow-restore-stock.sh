@@ -34,15 +34,24 @@ for pair in \
     echo "!! $dir/$f is not $STOCK_ROM ($got) -- refusing" >&2; exit 1; }
 done
 
-getvar() { fastboot getvar "$1" 2>&1 | sed -n "s/^$1: *//p" | head -1; }
+serial=${ANDROID_SERIAL:-}
+if [ -z "$serial" ]; then
+  found=$(fastboot devices | awk 'NF {print $1}')
+  n=$(printf '%s\n' "$found" | grep -c . || true)
+  [ "$n" = 1 ] || {
+    echo "!! $n fastboot devices; connect exactly one or set ANDROID_SERIAL" >&2; exit 1; }
+  serial=$found
+fi
+
+getvar() { fastboot -s "$serial" getvar "$1" 2>&1 | sed -n "s/^$1: *//p" | head -1; }
 product=$(getvar product)
 [ "$product" = willow ] || { echo "!! product '${product:-unknown}', not willow -- refusing" >&2; exit 1; }
 unlocked=$(getvar unlocked)
 [ "$unlocked" = yes ] || { echo "!! unlocked: ${unlocked:-unknown} -- refusing" >&2; exit 1; }
 
 run() {
-  echo "+ $*"
-  [ "$dry" = 1 ] || "$@"
+  echo "+ fastboot -s $serial $*"
+  [ "$dry" = 1 ] || fastboot -s "$serial" "$@"
 }
 
 if [ "$dry" = 0 ]; then
@@ -52,8 +61,8 @@ if [ "$dry" = 0 ]; then
 fi
 
 # anti: 1 -- only these three; never xbl/abl/tz/modem, never a lock command.
-run fastboot flash vbmeta "$dir/vbmeta.img"
-run fastboot flash dtbo "$dir/dtbo.img"
-run fastboot flash boot "$dir/boot.img"
-run fastboot erase userdata
-run fastboot reboot
+run flash vbmeta "$dir/vbmeta.img"
+run flash dtbo "$dir/dtbo.img"
+run flash boot "$dir/boot.img"
+run erase userdata
+run reboot

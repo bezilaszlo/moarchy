@@ -43,16 +43,21 @@ printf '%s\n' "$_cmds" | grep -q -- '--set-active' \
 printf '%s\n' "$_cmds" | grep -q 'flash vbmeta' \
   && no "flash.sh writes vbmeta -- that partition is written once, from the workspace" \
   || ok "flash.sh never writes vbmeta"
-grep -q '^fastboot boot boot.img' "$IMG_XZ/flash.sh" \
+grep -q '^fastboot -s "\$serial" boot boot.img' "$IMG_XZ/flash.sh" \
   && ok "flash.sh boots the kernel from RAM rather than flashing it (PLAN 3.1)" \
   || no "flash.sh does not fastboot boot -- a first boot must be recoverable by a power cycle"
-[ "$(grep -c 'fastboot flash boot boot.img' "$IMG_XZ/flash.sh")" = 1 ] &&
+[ "$(grep -c 'fastboot -s "\$serial" flash boot boot.img' "$IMG_XZ/flash.sh")" = 1 ] &&
   grep -q 'Type PERSIST' "$IMG_XZ/flash.sh" \
   && ok "the boot partition is written only behind a typed confirmation (PLAN 3.3)" \
   || no "flash.sh writes the boot partition without the --persist confirmation"
 grep -q '\[ "\$product" = willow \]' "$IMG_XZ/flash.sh" \
   && ok "flash.sh refuses any phone that is not willow" \
   || no "flash.sh does not check fastboot getvar product"
+_loose=$(printf '%s\n' "$_cmds" | grep -E '(^[[:space:]]*fastboot |\$\(fastboot )' |
+  grep -vcE 'fastboot -s "\$serial"|fastboot devices' || true)
+[ "$_loose" = 0 ] \
+  && ok "every fastboot command names the one serial the script resolved" \
+  || no "$_loose fastboot commands do not pass -s; a second phone can catch a write"
 fi
 
 sec "boot image"

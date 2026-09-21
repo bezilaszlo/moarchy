@@ -407,12 +407,19 @@ case "${1:-}" in
 esac
 
 command -v fastboot >/dev/null || { echo "!! fastboot not on PATH" >&2; exit 1; }
-fastboot devices | grep -q . || { echo "!! no fastboot device -- is the phone in the bootloader?" >&2; exit 1; }
+serial=${ANDROID_SERIAL:-}
+if [ -z "$serial" ]; then
+  found=$(fastboot devices | awk 'NF {print $1}')
+  n=$(printf '%s\n' "$found" | grep -c . || true)
+  [ "$n" = 1 ] || {
+    echo "!! $n fastboot devices; connect exactly one or set ANDROID_SERIAL" >&2; exit 1; }
+  serial=$found
+fi
 
-unlocked=$(fastboot getvar unlocked 2>&1 | sed -n 's/^unlocked: *//p' | head -1)
+unlocked=$(fastboot -s "$serial" getvar unlocked 2>&1 | sed -n 's/^unlocked: *//p' | head -1)
 [ "$unlocked" = yes ] || { echo "!! bootloader is locked (unlocked: ${unlocked:-unknown})" >&2; exit 1; }
 
-product=$(fastboot getvar product 2>&1 | sed -n 's/^product: *//p' | head -1)
+product=$(fastboot -s "$serial" getvar product 2>&1 | sed -n 's/^product: *//p' | head -1)
 [ "$product" = willow ] || {
   echo "!! this phone reports product '${product:-unknown}', not willow -- refusing" >&2; exit 1; }
 
@@ -422,16 +429,16 @@ if [ "$persist" = 1 ]; then
   read -r -p "Type PERSIST to write it: " reply
   [ "$reply" = PERSIST ] || { echo "not confirmed; nothing written" >&2; exit 1; }
   echo "==> boot"
-  fastboot flash boot boot.img
+  fastboot -s "$serial" flash boot boot.img
   echo "==> done; the phone now boots moarchy by itself"
   exit 0
 fi
 
 # Sparse: fastboot refuses a raw image over 4 GiB, and splits this one into chunks.
 echo "==> $ROOTPART (the rootfs -- this is the slow one, several minutes)"
-fastboot flash "$ROOTPART" rootfs.simg
+fastboot -s "$serial" flash "$ROOTPART" rootfs.simg
 
 echo "==> booting this kernel from RAM (the boot partition is untouched)"
-fastboot boot boot.img
+fastboot -s "$serial" boot boot.img
 FLASH
 }
